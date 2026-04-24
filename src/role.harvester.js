@@ -2,7 +2,14 @@ const cache = require('cache');
 
 const roleHarvester = {
     run: function (creep) {
-        if (creep.store.getFreeCapacity() === 0) {
+        if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
+            creep.memory.delivering = false;
+        }
+        if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
+            creep.memory.delivering = true;
+        }
+
+        if (creep.memory.delivering) {
             const target = roleHarvester.getTransferTarget(creep);
             if (target) {
                 roleHarvester.transferEnergy(creep);
