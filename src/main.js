@@ -5,6 +5,8 @@ const roleRepairer = require('role.repairer');
 const roleMiner = require('role.miner');
 const roleClaimer = require('role.claimer');
 const roleDefender = require('role.defender');
+const roleScout = require('role.scout');
+const rolePioneer = require('role.pioneer');
 const towerLogic = require('role.tower');
 const cache = require('cache');
 
@@ -28,6 +30,8 @@ function setRoles() {
             'miner': roleMiner,
             'claimer': roleClaimer,
             'defender': roleDefender,
+            'scout': roleScout,
+            'pioneer': rolePioneer,
         }[creep.memory.role];
         if (roleObj) roleObj.run(creep);
     }
@@ -68,11 +72,73 @@ function checkSafeMode() {
     }
 }
 
+// Auto-select the best scouted room to claim when GCL allows expansion
+function selectClaimTarget() {
+    if (Memory.claimTarget) return;
+
+    const ownedRooms = Object.values(Game.rooms)
+        .filter(r => r.controller && r.controller.my).length;
+    if (Game.gcl.level <= ownedRooms) return;
+
+    const data = Memory.scoutData || {};
+    const candidates = Object.entries(data)
+        .filter(([, d]) => !d.owner && !d.hostile && d.sources > 0)
+        .sort(([, a], [, b]) => b.sources - a.sources);
+
+    if (candidates.length > 0) {
+        Memory.claimTarget = candidates[0][0];
+        console.log('🗺️ Auto-selected claim target: ' + Memory.claimTarget);
+    }
+}
+
+// Place a spawn construction site near the controller for newly claimed rooms
+function bootstrapNewRooms() {
+    for (const roomName in Game.rooms) {
+        const room = Game.rooms[roomName];
+        if (!room.controller || !room.controller.my) continue;
+
+        const hasSpawn = cache.find(room, FIND_MY_STRUCTURES)
+            .some(s => s.structureType === STRUCTURE_SPAWN);
+        const hasSpawnSite = room.find(FIND_CONSTRUCTION_SITES)
+            .some(s => s.structureType === STRUCTURE_SPAWN);
+
+        if (!hasSpawn && !hasSpawnSite) {
+            placeSpawnNearController(room);
+        }
+
+        // Clear claim target once claimed
+        if (Memory.claimTarget === roomName) {
+            Memory.claimTarget = null;
+        }
+    }
+}
+
+function placeSpawnNearController(room) {
+    const ctrl = room.controller;
+    if (!ctrl) return;
+    const terrain = room.getTerrain();
+    for (let r = 2; r <= 6; r++) {
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dy = -r; dy <= r; dy++) {
+                if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+                const x = ctrl.pos.x + dx;
+                const y = ctrl.pos.y + dy;
+                if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+                if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                if (room.createConstructionSite(x, y, STRUCTURE_SPAWN) === OK) {
+                    console.log('🏠 Placed spawn site in ' + room.name);
+                    return;
+                }
+            }
+        }
+    }
+}
+
 function spawnCreeps() {
     const spawn = Game.spawns['Spawn1'];
     if (!spawn) return;
 
-    // Defenders — reactive, spawn up to 2 when hostiles present
+    // Defenders — reactive, priority spawn when hostiles present
     const hostiles = cache.find(spawn.room, FIND_HOSTILE_CREEPS);
     if (hostiles.length > 0) {
         const defenders = _.filter(Game.creeps, c => c.memory.role === 'defender');
@@ -92,7 +158,6 @@ function spawnCreeps() {
             filter: s => s.structureType === STRUCTURE_CONTAINER
         }).length > 0;
         if (!hasContainer) continue;
-
         const minersForSource = _.filter(Game.creeps, c =>
             c.memory.role === 'miner' && c.memory.sourceId === source.id
         );
@@ -104,8 +169,34 @@ function spawnCreeps() {
         }
     }
 
-    // Standard roles — 2 each, in priority order
-    const roles = ['harvester', 'builder', 'upgrader', 'repairer'];
+    // Harvesters — always maintain 2 in home room first
+    const harvesterCount = _.filter(Game.creeps, c => c.memory.role === 'harvester').length;
+    if (harvesterCount < 2 && spawn.room.energyAvailable >= 300) {
+        spawnStandardCreep(spawn, 'harvester');
+        return;
+    }
+
+    // Pioneers — 3 per newly claimed room without a spawn
+    for (const roomName in Game.rooms) {
+        const room = Game.rooms[roomName];
+        if (!room.controller || !room.controller.my) continue;
+        if (room.name === spawn.room.name) continue;
+        const hasSpawn = cache.find(room, FIND_MY_STRUCTURES)
+            .some(s => s.structureType === STRUCTURE_SPAWN);
+        if (hasSpawn) continue;
+        const pioneers = _.filter(Game.creeps, c =>
+            c.memory.role === 'pioneer' && c.memory.targetRoom === roomName
+        );
+        if (pioneers.length < 3 && spawn.room.energyAvailable >= 550) {
+            spawn.spawnCreep([WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], 'Pioneer' + Game.time, {
+                memory: { role: 'pioneer', targetRoom: roomName }
+            });
+            return;
+        }
+    }
+
+    // Standard roles — 2 each
+    const roles = ['builder', 'upgrader', 'repairer'];
     for (const role of roles) {
         const count = _.filter(Game.creeps, c => c.memory.role === role).length;
         if (count < 2 && spawn.room.energyAvailable >= 300) {
@@ -114,7 +205,14 @@ function spawnCreeps() {
         }
     }
 
-    // Claimer — only when Memory.claimTarget is set
+    // Scout — 1 per home room, low priority
+    const scouts = _.filter(Game.creeps, c => c.memory.role === 'scout');
+    if (scouts.length === 0 && spawn.room.energyAvailable >= 50) {
+        spawn.spawnCreep([MOVE], 'Scout' + Game.time, { memory: { role: 'scout' } });
+        return;
+    }
+
+    // Claimer — when Memory.claimTarget is set (auto or manual)
     if (Memory.claimTarget) {
         const claimers = _.filter(Game.creeps, c => c.memory.role === 'claimer');
         if (claimers.length === 0 && spawn.room.energyAvailable >= 650) {
@@ -137,6 +235,8 @@ function spawnStandardCreep(spawn, role) {
 
 module.exports.loop = function () {
     wipeMemory();
+    selectClaimTarget();
+    bootstrapNewRooms();
     checkSafeMode();
     spawnCreeps();
     setRoles();
