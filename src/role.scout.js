@@ -18,11 +18,18 @@ const roleScout = {
 
     recordRoom: function (room) {
         if (!Memory.scoutData) Memory.scoutData = {};
+        const ctrl = room.controller;
+        const towers = room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_TOWER });
+        const spawns = room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_SPAWN });
         Memory.scoutData[room.name] = {
             sources: room.find(FIND_SOURCES).length,
-            owner: room.controller && room.controller.owner ? room.controller.owner.username : null,
-            reservedBy: room.controller && room.controller.reservation ? room.controller.reservation.username : null,
-            hostile: room.find(FIND_HOSTILE_STRUCTURES).length > 0,
+            owner: ctrl && ctrl.owner ? ctrl.owner.username : null,
+            reservedBy: ctrl && ctrl.reservation ? ctrl.reservation.username : null,
+            rcl: ctrl ? ctrl.level : 0,
+            towers: towers.length,
+            spawns: spawns.length,
+            safeMode: ctrl ? !!ctrl.safeMode : false,
+            hostile: spawns.length > 0 || towers.length > 0,
             scoutedAt: Game.time
         };
     },

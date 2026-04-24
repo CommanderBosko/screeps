@@ -7,6 +7,7 @@ const roleClaimer = require('role.claimer');
 const roleDefender = require('role.defender');
 const roleScout = require('role.scout');
 const rolePioneer = require('role.pioneer');
+const roleAttacker = require('role.attacker');
 const towerLogic = require('role.tower');
 const cache = require('cache');
 
@@ -40,6 +41,7 @@ function setRoles() {
             'defender': roleDefender,
             'scout': roleScout,
             'pioneer': rolePioneer,
+            'attacker': roleAttacker,
         }[creep.memory.role];
         if (roleObj) roleObj.run(creep);
     }
@@ -72,6 +74,38 @@ function checkSafeMode() {
             room.controller.activateSafeMode();
             console.log('⚠️ Safe mode activated in ' + roomName);
         }
+    }
+}
+
+// Only runs when Memory.attackEnabled = true (set manually in console)
+function selectAttackTarget() {
+    if (!Memory.attackEnabled || Memory.attackTarget) return;
+
+    const data = Memory.scoutData || {};
+    const candidates = Object.entries(data)
+        .filter(([, d]) => d.owner && !d.safeMode && d.rcl > 0 && d.rcl <= 4 && d.towers <= 1)
+        .sort(([, a], [, b]) => (a.towers * 10 + a.rcl) - (b.towers * 10 + b.rcl));
+
+    if (candidates.length > 0) {
+        Memory.attackTarget = candidates[0][0];
+        console.log('⚔️ Attack target selected: ' + Memory.attackTarget);
+    }
+}
+
+function checkAttackComplete() {
+    if (!Memory.attackTarget) return;
+    const room = Game.rooms[Memory.attackTarget];
+    if (!room) return;
+
+    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+    const dangerStructures = room.find(FIND_HOSTILE_STRUCTURES, {
+        filter: s => s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_TOWER
+    });
+
+    if (hostiles.length === 0 && dangerStructures.length === 0) {
+        console.log('🏴 ' + Memory.attackTarget + ' cleared — queuing for claim.');
+        if (!Memory.claimTarget) Memory.claimTarget = Memory.attackTarget;
+        Memory.attackTarget = null;
     }
 }
 
@@ -197,6 +231,20 @@ function spawnForRoom(spawn) {
         }
     }
 
+    // Attackers — squad of 5 when an attack target is set
+    if (Memory.attackTarget) {
+        const attackers = _.filter(Game.creeps, c => c.memory.role === 'attacker').length;
+        if (attackers < 5 && room.energyAvailable >= 480) {
+            const body = room.energyAvailable >= 720
+                ? [TOUGH, TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE]
+                : [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE];
+            spawn.spawnCreep(body, 'Attacker' + Game.time, {
+                memory: { role: 'attacker', targetRoom: Memory.attackTarget, homeRoom: rn }
+            });
+            return;
+        }
+    }
+
     // Standard roles — 2 each per room
     for (const role of ['builder', 'upgrader', 'repairer']) {
         if (roomCreeps(role, rn) < 2 && room.energyAvailable >= 300) {
@@ -234,6 +282,8 @@ function spawnStandard(spawn, role, homeRoom) {
 module.exports.loop = function () {
     wipeMemory();
     migrateCreepMemory();
+    selectAttackTarget();
+    checkAttackComplete();
     selectClaimTarget();
     bootstrapNewRooms();
     checkSafeMode();
