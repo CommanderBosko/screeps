@@ -18,6 +18,15 @@ function wipeMemory() {
     }
 }
 
+function migrateCreepMemory() {
+    for (const name in Game.creeps) {
+        const creep = Game.creeps[name];
+        if (!creep.memory.homeRoom) {
+            creep.memory.homeRoom = creep.room.name;
+        }
+    }
+}
+
 function setRoles() {
     for (const name in Game.creeps) {
         const creep = Game.creeps[name];
@@ -224,6 +233,7 @@ function spawnStandard(spawn, role, homeRoom) {
 
 module.exports.loop = function () {
     wipeMemory();
+    migrateCreepMemory();
     selectClaimTarget();
     bootstrapNewRooms();
     checkSafeMode();
