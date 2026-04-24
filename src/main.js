@@ -9,6 +9,7 @@ const roleScout = require('role.scout');
 const rolePioneer = require('role.pioneer');
 const roleAttacker = require('role.attacker');
 const towerLogic = require('role.tower');
+const defense = require('defense');
 const cache = require('cache');
 
 function wipeMemory() {
@@ -292,6 +293,9 @@ function spawnStandard(spawn, role, homeRoom) {
 module.exports.loop = function () {
     wipeMemory();
     migrateCreepMemory();
+    if (Game.time % 100 === 0) {
+        for (const roomName in Game.rooms) defense.run(Game.rooms[roomName]);
+    }
     selectAttackTarget();
     checkAttackComplete();
     selectClaimTarget();
