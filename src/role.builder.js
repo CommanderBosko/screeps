@@ -1,13 +1,13 @@
 const cache = require('cache');
 
 const constructionPriority = [
-    STRUCTURE_ROAD,
     STRUCTURE_TOWER,
+    STRUCTURE_WALL,
+    STRUCTURE_RAMPART,
     STRUCTURE_EXTENSION,
     STRUCTURE_CONTAINER,
     STRUCTURE_STORAGE,
-    STRUCTURE_WALL,
-    STRUCTURE_RAMPART,
+    STRUCTURE_ROAD,
 ];
 
 const roleBuilder = {
