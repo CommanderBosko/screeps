@@ -8,6 +8,7 @@ const roleRepairer = {
     run: function (creep) {
         if (creep.memory.repairing && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.repairing = false;
+            creep.memory.sourceId = null;
             creep.say('🔄 Harvest');
         }
         if (!creep.memory.repairing && creep.store.getFreeCapacity() === 0) {
@@ -74,11 +75,11 @@ const roleRepairer = {
             }
             return;
         }
-        const sources = cache.find(creep.room, FIND_SOURCES);
-        if (sources.length === 0) return;
-        const target = creep.pos.findClosestByRange(sources);
-        if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
+        if (!creep.memory.sourceId) cache.assignSource(creep, 'repairer');
+        const source = Game.getObjectById(creep.memory.sourceId);
+        if (!source) { creep.memory.sourceId = null; return; }
+        if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
     }
 };

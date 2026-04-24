@@ -2,10 +2,10 @@ const cache = require('cache');
 
 const constructionPriority = [
     STRUCTURE_TOWER,
-    STRUCTURE_WALL,
-    STRUCTURE_RAMPART,
     STRUCTURE_EXTENSION,
     STRUCTURE_CONTAINER,
+    STRUCTURE_RAMPART,
+    STRUCTURE_WALL,
     STRUCTURE_STORAGE,
     STRUCTURE_ROAD,
 ];
@@ -14,6 +14,7 @@ const roleBuilder = {
     run: function (creep) {
         if (creep.memory.building && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.building = false;
+            creep.memory.sourceId = null;
             creep.say('🔄 Harvest');
         }
         if (!creep.memory.building && creep.store.getFreeCapacity() === 0) {
@@ -49,11 +50,13 @@ const roleBuilder = {
                         creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ffffff' } });
                     }
                 } else {
-                    const roomSpawns = cache.find(creep.room, FIND_MY_SPAWNS);
-                    if (roomSpawns.length > 0) {
-                        creep.moveTo(roomSpawns[0].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
+                    const controller = creep.room.controller;
+                    if (controller) {
+                        if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(controller, { visualizePathStyle: { stroke: '#ffaa00' } });
+                        }
+                        creep.say('⬆ Upgrade');
                     }
-                    creep.say('💤 Idle');
                 }
             }
         } else {
@@ -72,11 +75,11 @@ const roleBuilder = {
             }
             return;
         }
-        const sources = cache.find(creep.room, FIND_SOURCES);
-        if (sources.length === 0) return;
-        const target = creep.pos.findClosestByRange(sources);
-        if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
+        if (!creep.memory.sourceId) cache.assignSource(creep, 'builder');
+        const source = Game.getObjectById(creep.memory.sourceId);
+        if (!source) { creep.memory.sourceId = null; return; }
+        if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
     }
 };

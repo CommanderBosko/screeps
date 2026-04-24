@@ -4,6 +4,9 @@ const defense = {
         if (room.find(FIND_CONSTRUCTION_SITES).length >= 90) return;
         defense.placeStructureRamparts(room);
         defense.placeTowers(room);
+        defense.placeExtensions(room);
+        defense.placeContainers(room);
+        defense.placeRoads(room);
         defense.placeChokepoints(room);
     },
 
@@ -54,6 +57,88 @@ const defense = {
                         console.log('🗼 Tower site placed in ' + room.name + ' at ' + x + ',' + y);
                         return;
                     }
+                }
+            }
+        }
+    },
+
+    placeExtensions: function (room) {
+        const maxExt = CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION][room.controller.level] || 0;
+        if (maxExt === 0) return;
+        const existing = room.find(FIND_MY_STRUCTURES, { filter: s => s.structureType === STRUCTURE_EXTENSION }).length;
+        const sites = room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.structureType === STRUCTURE_EXTENSION }).length;
+        if (existing + sites >= maxExt) return;
+
+        const spawn = room.find(FIND_MY_SPAWNS)[0];
+        if (!spawn) return;
+        const terrain = room.getTerrain();
+
+        for (let r = 2; r <= 15; r++) {
+            for (let dx = -r; dx <= r; dx++) {
+                for (let dy = -r; dy <= r; dy++) {
+                    if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+                    const x = spawn.pos.x + dx, y = spawn.pos.y + dy;
+                    if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+                    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                    const pos = new RoomPosition(x, y, room.name);
+                    if (pos.lookFor(LOOK_STRUCTURES).length > 0) continue;
+                    if (pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0) continue;
+                    if (room.createConstructionSite(x, y, STRUCTURE_EXTENSION) === OK) {
+                        console.log('⚡ Extension site placed in ' + room.name);
+                        return;
+                    }
+                }
+            }
+        }
+    },
+
+    placeContainers: function (room) {
+        const sources = room.find(FIND_SOURCES);
+        for (const source of sources) {
+            const hasContainer = source.pos.findInRange(FIND_STRUCTURES, 1, {
+                filter: s => s.structureType === STRUCTURE_CONTAINER
+            }).length > 0;
+            const hasSite = source.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
+                filter: s => s.structureType === STRUCTURE_CONTAINER
+            }).length > 0;
+            if (hasContainer || hasSite) continue;
+
+            const terrain = room.getTerrain();
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const x = source.pos.x + dx, y = source.pos.y + dy;
+                    if (x < 1 || x > 48 || y < 1 || y > 48) continue;
+                    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                    const pos = new RoomPosition(x, y, room.name);
+                    if (pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType !== STRUCTURE_ROAD)) continue;
+                    if (pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0) continue;
+                    if (room.createConstructionSite(x, y, STRUCTURE_CONTAINER) === OK) {
+                        console.log('📦 Container site placed near source in ' + room.name);
+                        break;
+                    }
+                }
+            }
+        }
+    },
+
+    placeRoads: function (room) {
+        const spawn = room.find(FIND_MY_SPAWNS)[0];
+        if (!spawn) return;
+
+        const targets = [
+            ...room.find(FIND_SOURCES),
+            room.controller
+        ].filter(Boolean);
+
+        for (const target of targets) {
+            const path = spawn.pos.findPathTo(target, { ignoreCreeps: true });
+            for (const step of path) {
+                const pos = new RoomPosition(step.x, step.y, room.name);
+                const hasRoad = pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType === STRUCTURE_ROAD);
+                const hasSite = pos.lookFor(LOOK_CONSTRUCTION_SITES).some(s => s.structureType === STRUCTURE_ROAD);
+                if (!hasRoad && !hasSite) {
+                    room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
                 }
             }
         }

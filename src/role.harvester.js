@@ -38,27 +38,12 @@ const roleHarvester = {
             return;
         }
 
-        if (!creep.memory.sourceId) roleHarvester.setSource(creep);
+        if (!creep.memory.sourceId) cache.assignSource(creep, 'harvester');
         const source = Game.getObjectById(creep.memory.sourceId);
         if (source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
             creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
         creep.say('⛏️');
-    },
-
-    setSource: function (creep) {
-        const sources = cache.find(creep.room, FIND_SOURCES);
-        if (sources.length === 0) return;
-        const counts = {};
-        for (const s of sources) counts[s.id] = 0;
-        for (const name in Game.creeps) {
-            const c = Game.creeps[name];
-            if (c.memory.role === 'harvester' && c.memory.sourceId && c.id !== creep.id) {
-                if (counts[c.memory.sourceId] !== undefined) counts[c.memory.sourceId]++;
-            }
-        }
-        const target = sources.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b);
-        creep.memory.sourceId = target.id;
     },
 
     transferEnergy: function (creep) {
