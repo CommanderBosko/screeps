@@ -1,0 +1,31 @@
+{
+  "name": "screeps",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "push": "node push.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CommanderBosko/screeps.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/CommanderBosko/screeps/issues"
+  },
+  "homepage": "https://github.com/CommanderBosko/screeps#readme",
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^29.0.2",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@types/screeps": "^3.3.8",
+    "rollup": "^4.60.2",
+    "rollup-plugin-screeps": "^1.0.1",
+    "tslib": "^2.8.1",
+    "typescript": "^6.0.3"
+  }
+}

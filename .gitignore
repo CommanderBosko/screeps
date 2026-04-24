@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.screeps.json
+*.js.map
