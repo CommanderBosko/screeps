@@ -4,6 +4,7 @@ const roleBuilder = require('role.builder');
 const roleRepairer = require('role.repairer');
 const roleMiner = require('role.miner');
 const roleClaimer = require('role.claimer');
+const roleDefender = require('role.defender');
 const towerLogic = require('role.tower');
 const cache = require('cache');
 
@@ -26,6 +27,7 @@ function setRoles() {
             'repairer': roleRepairer,
             'miner': roleMiner,
             'claimer': roleClaimer,
+            'defender': roleDefender,
         }[creep.memory.role];
         if (roleObj) roleObj.run(creep);
     }
@@ -42,9 +44,46 @@ function runTowers() {
     }
 }
 
+function checkSafeMode() {
+    for (const roomName in Game.rooms) {
+        const room = Game.rooms[roomName];
+        if (!room.controller || !room.controller.my) continue;
+        if (room.controller.safeMode) continue;
+        if (!room.controller.safeModeAvailable) continue;
+
+        const hostiles = cache.find(room, FIND_HOSTILE_CREEPS);
+        const dangerous = hostiles.filter(h =>
+            h.body.some(p => p.type === ATTACK || p.type === RANGED_ATTACK || p.type === WORK)
+        );
+        if (dangerous.length === 0) continue;
+
+        const towers = cache.find(room, FIND_MY_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_TOWER);
+        const towerEnergy = towers.reduce((sum, t) => sum + t.store[RESOURCE_ENERGY], 0);
+
+        if (towers.length === 0 || towerEnergy < 500) {
+            room.controller.activateSafeMode();
+            console.log('⚠️ Safe mode activated in ' + roomName);
+        }
+    }
+}
+
 function spawnCreeps() {
     const spawn = Game.spawns['Spawn1'];
     if (!spawn) return;
+
+    // Defenders — reactive, spawn up to 2 when hostiles present
+    const hostiles = cache.find(spawn.room, FIND_HOSTILE_CREEPS);
+    if (hostiles.length > 0) {
+        const defenders = _.filter(Game.creeps, c => c.memory.role === 'defender');
+        if (defenders.length < 2 && spawn.room.energyAvailable >= 200) {
+            const body = spawn.room.energyAvailable >= 380
+                ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
+                : [TOUGH, ATTACK, MOVE, MOVE];
+            spawn.spawnCreep(body, 'Defender' + Game.time, { memory: { role: 'defender' } });
+            return;
+        }
+    }
 
     // Miners — one per source that has an adjacent container
     const sources = cache.find(spawn.room, FIND_SOURCES);
@@ -98,6 +137,7 @@ function spawnStandardCreep(spawn, role) {
 
 module.exports.loop = function () {
     wipeMemory();
+    checkSafeMode();
     spawnCreeps();
     setRoles();
     runTowers();

@@ -1,5 +1,9 @@
 const cache = require('cache');
 
+function rampartTarget(room) {
+    return Math.min((room.controller ? room.controller.level : 1) * 10000, 80000);
+}
+
 const roleRepairer = {
     run: function (creep) {
         if (creep.memory.repairing && creep.store[RESOURCE_ENERGY] === 0) {
@@ -21,23 +25,40 @@ const roleRepairer = {
                     creep.moveTo(towers[0], { visualizePathStyle: { stroke: '#ffffff' } });
                 }
                 creep.say('🚀 Delivering');
-            } else {
-                const targets = cache.find(creep.room, FIND_STRUCTURES)
-                    .filter(s => s.hits < s.hitsMax &&
-                        s.structureType !== STRUCTURE_WALL &&
-                        s.structureType !== STRUCTURE_RAMPART);
-
-                if (targets.length > 0) {
-                    targets.sort((a, b) => a.hits - b.hits);
-                    if (creep.repair(targets[0]) === ERR_NOT_IN_RANGE) {
-                        creep.moveTo(targets[0], { visualizePathStyle: { stroke: '#ffffff' } });
-                    }
-                    creep.say('🔧 Repairing');
-                } else {
-                    creep.say('💤 Idle');
-                    creep.moveTo(Game.spawns['Spawn1'].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
-                }
+                return;
             }
+
+            // Repair non-wall/rampart structures first
+            const damaged = cache.find(creep.room, FIND_STRUCTURES)
+                .filter(s => s.hits < s.hitsMax &&
+                    s.structureType !== STRUCTURE_WALL &&
+                    s.structureType !== STRUCTURE_RAMPART);
+
+            if (damaged.length > 0) {
+                damaged.sort((a, b) => a.hits - b.hits);
+                if (creep.repair(damaged[0]) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(damaged[0], { visualizePathStyle: { stroke: '#ffffff' } });
+                }
+                creep.say('🔧 Repairing');
+                return;
+            }
+
+            // Maintain ramparts/walls up to the HP floor
+            const hpTarget = rampartTarget(creep.room);
+            const weakBarrier = cache.find(creep.room, FIND_STRUCTURES)
+                .filter(s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) && s.hits < hpTarget);
+
+            if (weakBarrier.length > 0) {
+                weakBarrier.sort((a, b) => a.hits - b.hits);
+                if (creep.repair(weakBarrier[0]) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(weakBarrier[0], { visualizePathStyle: { stroke: '#aaaaaa' } });
+                }
+                creep.say('🧱 Barrier');
+                return;
+            }
+
+            creep.say('💤 Idle');
+            creep.moveTo(Game.spawns['Spawn1'].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
         } else {
             roleRepairer.getEnergy(creep);
         }
