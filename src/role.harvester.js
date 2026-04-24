@@ -32,10 +32,16 @@ const roleHarvester = {
     setSource: function (creep) {
         const sources = cache.find(creep.room, FIND_SOURCES);
         if (sources.length === 0) return;
-        const available = sources.filter(s =>
-            s.energy > 0 && !s.pos.findInRange(FIND_MY_CREEPS, 1).length
-        );
-        creep.memory.sourceId = (available[0] || sources[0]).id;
+        const counts = {};
+        for (const s of sources) counts[s.id] = 0;
+        for (const name in Game.creeps) {
+            const c = Game.creeps[name];
+            if (c.memory.role === 'harvester' && c.memory.sourceId && c.id !== creep.id) {
+                if (counts[c.memory.sourceId] !== undefined) counts[c.memory.sourceId]++;
+            }
+        }
+        const target = sources.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b);
+        creep.memory.sourceId = target.id;
     },
 
     transferEnergy: function (creep) {
