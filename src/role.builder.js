@@ -62,6 +62,7 @@ const roleBuilder = {
     },
 
     getEnergy: function (creep) {
+        if (cache.pickupNearby(creep)) return;
         const containers = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
         if (containers.length > 0) {
