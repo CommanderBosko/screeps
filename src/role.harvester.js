@@ -1,65 +1,63 @@
+const cache = require('cache');
+
 const roleHarvester = {
     run: function (creep) {
-        if (!creep.memory.sourceId) {
-            roleHarvester.setSource(creep);
-        }
-
         if (creep.store.getFreeCapacity() === 0) {
             roleHarvester.transferEnergy(creep);
             return;
         }
+        roleHarvester.getEnergy(creep);
+    },
 
+    getEnergy: function (creep) {
+        const containers = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
+        if (containers.length > 0) {
+            const target = creep.pos.findClosestByRange(containers);
+            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
+            }
+            creep.say('📦');
+            return;
+        }
+
+        if (!creep.memory.sourceId) roleHarvester.setSource(creep);
         const source = Game.getObjectById(creep.memory.sourceId);
         if (source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
             creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
-        creep.say('⛏️ Harvesting');
+        creep.say('⛏️');
     },
 
     setSource: function (creep) {
-        const sources = creep.room.find(FIND_SOURCES);
+        const sources = cache.find(creep.room, FIND_SOURCES);
         if (sources.length === 0) return;
-
-        const availableSources = sources.filter(source =>
-            source.energy > 0 && !source.pos.findInRange(FIND_MY_CREEPS, 1).length
+        const available = sources.filter(s =>
+            s.energy > 0 && !s.pos.findInRange(FIND_MY_CREEPS, 1).length
         );
-        if (availableSources.length > 0) {
-            creep.memory.sourceId = availableSources[0].id;
-        }
-        // If no available sources, keep existing sourceId (or stay unset until next tick)
+        creep.memory.sourceId = (available[0] || sources[0]).id;
     },
 
     transferEnergy: function (creep) {
-        const transferTarget = roleHarvester.getTransferTarget(creep);
-        if (!transferTarget) return;
-
-        if (creep.transfer(transferTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(transferTarget, { visualizePathStyle: { stroke: '#ffffff' } });
+        const target = roleHarvester.getTransferTarget(creep);
+        if (!target) return;
+        if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+            creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
         }
-        creep.say('🏭 Transfer');
+        creep.say('🏭');
     },
 
     getTransferTarget: function (creep) {
-        const spawns = creep.room.find(FIND_MY_STRUCTURES, {
-            filter: (structure) => structure.structureType === STRUCTURE_SPAWN && structure.energy < structure.energyCapacity
-        });
+        const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
+        const spawns = myStructs.filter(s => s.structureType === STRUCTURE_SPAWN && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
         if (spawns.length > 0) return spawns[0];
-
-        const extensions = creep.room.find(FIND_MY_STRUCTURES, {
-            filter: (structure) => structure.structureType === STRUCTURE_EXTENSION && structure.energy < structure.energyCapacity
-        });
+        const extensions = myStructs.filter(s => s.structureType === STRUCTURE_EXTENSION && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
         if (extensions.length > 0) return extensions[0];
-
-        const towers = creep.room.find(FIND_MY_STRUCTURES, {
-            filter: (structure) => structure.structureType === STRUCTURE_TOWER && structure.energy < structure.energyCapacity
-        });
+        const towers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
         if (towers.length > 0) return towers[0];
-
-        const containers = creep.room.find(FIND_STRUCTURES, {
-            filter: (structure) => structure.structureType === STRUCTURE_CONTAINER && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-        });
+        const containers = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
         if (containers.length > 0) return containers[0];
-
         return null;
     }
 };

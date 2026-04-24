@@ -1,3 +1,5 @@
+const cache = require('cache');
+
 const constructionPriority = [
     STRUCTURE_ROAD,
     STRUCTURE_TOWER,
@@ -9,7 +11,7 @@ const constructionPriority = [
 ];
 
 const roleBuilder = {
-    run: function(creep) {
+    run: function (creep) {
         if (creep.memory.building && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.building = false;
             creep.say('🔄 Harvest');
@@ -20,27 +22,21 @@ const roleBuilder = {
         }
 
         if (creep.memory.building) {
-            const targets = creep.room.find(FIND_CONSTRUCTION_SITES);
+            const targets = cache.find(creep.room, FIND_CONSTRUCTION_SITES);
             if (targets.length > 0) {
                 targets.sort((a, b) => {
-                    const priorityA = constructionPriority.indexOf(a.structureType);
-                    const priorityB = constructionPriority.indexOf(b.structureType);
-                    const a_ = priorityA === -1 ? constructionPriority.length : priorityA;
-                    const b_ = priorityB === -1 ? constructionPriority.length : priorityB;
-                    return a_ - b_;
+                    const pa = constructionPriority.indexOf(a.structureType);
+                    const pb = constructionPriority.indexOf(b.structureType);
+                    return (pa === -1 ? constructionPriority.length : pa) -
+                           (pb === -1 ? constructionPriority.length : pb);
                 });
-
                 if (creep.build(targets[0]) === ERR_NOT_IN_RANGE) {
                     creep.moveTo(targets[0], { visualizePathStyle: { stroke: '#ffffff' } });
                 }
             } else {
-                const towers = creep.room.find(FIND_STRUCTURES, {
-                    filter: (structure) => structure.structureType === STRUCTURE_TOWER &&
-                        structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-                });
-                const spawns = creep.room.find(FIND_MY_SPAWNS, {
-                    filter: (spawn) => spawn.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-                });
+                const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
+                const towers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
+                const spawns = myStructs.filter(s => s.structureType === STRUCTURE_SPAWN && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
 
                 if (towers.length > 0) {
                     towers.sort((a, b) => creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b));
@@ -58,20 +54,28 @@ const roleBuilder = {
                 }
             }
         } else {
-            const sources = creep.room.find(FIND_SOURCES);
-            let targetSource;
-            if (sources.length > 1) {
-                const spawn = Game.spawns['Spawn1'];
-                const distanceToSource0 = spawn.pos.getRangeTo(sources[0]);
-                const distanceToSource1 = spawn.pos.getRangeTo(sources[1]);
-                targetSource = distanceToSource0 > distanceToSource1 ? sources[0] : sources[1];
-            } else {
-                targetSource = sources[0];
-            }
+            roleBuilder.getEnergy(creep);
+        }
+    },
 
-            if (creep.harvest(targetSource) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(targetSource, { visualizePathStyle: { stroke: '#ffaa00' } });
+    getEnergy: function (creep) {
+        const containers = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
+        if (containers.length > 0) {
+            const target = creep.pos.findClosestByRange(containers);
+            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
             }
+            return;
+        }
+        const sources = cache.find(creep.room, FIND_SOURCES);
+        if (sources.length === 0) return;
+        const spawn = Game.spawns['Spawn1'];
+        const target = sources.length > 1
+            ? (spawn.pos.getRangeTo(sources[0]) > spawn.pos.getRangeTo(sources[1]) ? sources[0] : sources[1])
+            : sources[0];
+        if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
+            creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
     }
 };
