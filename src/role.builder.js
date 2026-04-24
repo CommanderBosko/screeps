@@ -49,8 +49,11 @@ const roleBuilder = {
                         creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ffffff' } });
                     }
                 } else {
+                    const roomSpawns = cache.find(creep.room, FIND_MY_SPAWNS);
+                    if (roomSpawns.length > 0) {
+                        creep.moveTo(roomSpawns[0].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
+                    }
                     creep.say('💤 Idle');
-                    creep.moveTo(Game.spawns['Spawn1'].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
                 }
             }
         } else {
@@ -70,10 +73,7 @@ const roleBuilder = {
         }
         const sources = cache.find(creep.room, FIND_SOURCES);
         if (sources.length === 0) return;
-        const spawn = Game.spawns['Spawn1'];
-        const target = sources.length > 1
-            ? (spawn.pos.getRangeTo(sources[0]) > spawn.pos.getRangeTo(sources[1]) ? sources[0] : sources[1])
-            : sources[0];
+        const target = creep.pos.findClosestByRange(sources);
         if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
             creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
         }

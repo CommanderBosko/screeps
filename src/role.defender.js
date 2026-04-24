@@ -4,9 +4,9 @@ const roleDefender = {
     run: function (creep) {
         const hostiles = cache.find(creep.room, FIND_HOSTILE_CREEPS);
         if (hostiles.length === 0) {
-            const spawn = Game.spawns['Spawn1'];
-            if (spawn && !creep.pos.inRangeTo(spawn, 3)) {
-                creep.moveTo(spawn, { visualizePathStyle: { stroke: '#ff0000' } });
+            const spawns = cache.find(creep.room, FIND_MY_SPAWNS);
+            if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 3)) {
+                creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ff0000' } });
             }
             creep.say('👀');
             return;

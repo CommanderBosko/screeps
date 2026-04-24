@@ -14,7 +14,6 @@ function wipeMemory() {
     for (const name in Memory.creeps) {
         if (!Game.creeps[name]) {
             delete Memory.creeps[name];
-            console.log('Clearing non-existing creep memory:', name);
         }
     }
 }
@@ -42,9 +41,7 @@ function runTowers() {
         const room = Game.rooms[roomName];
         const towers = cache.find(room, FIND_MY_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_TOWER);
-        for (const tower of towers) {
-            towerLogic.run(tower);
-        }
+        for (const tower of towers) towerLogic.run(tower);
     }
 }
 
@@ -52,11 +49,9 @@ function checkSafeMode() {
     for (const roomName in Game.rooms) {
         const room = Game.rooms[roomName];
         if (!room.controller || !room.controller.my) continue;
-        if (room.controller.safeMode) continue;
-        if (!room.controller.safeModeAvailable) continue;
+        if (room.controller.safeMode || !room.controller.safeModeAvailable) continue;
 
-        const hostiles = cache.find(room, FIND_HOSTILE_CREEPS);
-        const dangerous = hostiles.filter(h =>
+        const dangerous = cache.find(room, FIND_HOSTILE_CREEPS).filter(h =>
             h.body.some(p => p.type === ATTACK || p.type === RANGED_ATTACK || p.type === WORK)
         );
         if (dangerous.length === 0) continue;
@@ -64,7 +59,6 @@ function checkSafeMode() {
         const towers = cache.find(room, FIND_MY_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_TOWER);
         const towerEnergy = towers.reduce((sum, t) => sum + t.store[RESOURCE_ENERGY], 0);
-
         if (towers.length === 0 || towerEnergy < 500) {
             room.controller.activateSafeMode();
             console.log('⚠️ Safe mode activated in ' + roomName);
@@ -72,10 +66,8 @@ function checkSafeMode() {
     }
 }
 
-// Auto-select the best scouted room to claim when GCL allows expansion
 function selectClaimTarget() {
     if (Memory.claimTarget) return;
-
     const ownedRooms = Object.values(Game.rooms)
         .filter(r => r.controller && r.controller.my).length;
     if (Game.gcl.level <= ownedRooms) return;
@@ -91,7 +83,6 @@ function selectClaimTarget() {
     }
 }
 
-// Place a spawn construction site near the controller for newly claimed rooms
 function bootstrapNewRooms() {
     for (const roomName in Game.rooms) {
         const room = Game.rooms[roomName];
@@ -102,14 +93,8 @@ function bootstrapNewRooms() {
         const hasSpawnSite = room.find(FIND_CONSTRUCTION_SITES)
             .some(s => s.structureType === STRUCTURE_SPAWN);
 
-        if (!hasSpawn && !hasSpawnSite) {
-            placeSpawnNearController(room);
-        }
-
-        // Clear claim target once claimed
-        if (Memory.claimTarget === roomName) {
-            Memory.claimTarget = null;
-        }
+        if (!hasSpawn && !hasSpawnSite) placeSpawnNearController(room);
+        if (Memory.claimTarget === roomName) Memory.claimTarget = null;
     }
 }
 
@@ -134,103 +119,107 @@ function placeSpawnNearController(room) {
     }
 }
 
-function spawnCreeps() {
-    const spawn = Game.spawns['Spawn1'];
-    if (!spawn) return;
+// Count creeps by role scoped to a specific home room
+function roomCreeps(role, roomName) {
+    return _.filter(Game.creeps, c => c.memory.role === role && c.memory.homeRoom === roomName).length;
+}
 
-    // Defenders — reactive, priority spawn when hostiles present
-    const hostiles = cache.find(spawn.room, FIND_HOSTILE_CREEPS);
-    if (hostiles.length > 0) {
-        const defenders = _.filter(Game.creeps, c => c.memory.role === 'defender');
-        if (defenders.length < 2 && spawn.room.energyAvailable >= 200) {
-            const body = spawn.room.energyAvailable >= 380
-                ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
-                : [TOUGH, ATTACK, MOVE, MOVE];
-            spawn.spawnCreep(body, 'Defender' + Game.time, { memory: { role: 'defender' } });
-            return;
-        }
+function spawnCreeps() {
+    for (const spawnName in Game.spawns) {
+        const spawn = Game.spawns[spawnName];
+        if (spawn.spawning) continue;
+        spawnForRoom(spawn);
+    }
+}
+
+function spawnForRoom(spawn) {
+    const room = spawn.room;
+    const rn = room.name;
+
+    // Defenders — reactive priority
+    const hostiles = cache.find(room, FIND_HOSTILE_CREEPS);
+    if (hostiles.length > 0 && roomCreeps('defender', rn) < 2 && room.energyAvailable >= 200) {
+        const body = room.energyAvailable >= 380
+            ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
+            : [TOUGH, ATTACK, MOVE, MOVE];
+        spawn.spawnCreep(body, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
+        return;
     }
 
-    // Miners — one per source that has an adjacent container
-    const sources = cache.find(spawn.room, FIND_SOURCES);
-    for (const source of sources) {
+    // Miners — one per source with adjacent container
+    for (const source of cache.find(room, FIND_SOURCES)) {
         const hasContainer = source.pos.findInRange(FIND_STRUCTURES, 1, {
             filter: s => s.structureType === STRUCTURE_CONTAINER
         }).length > 0;
         if (!hasContainer) continue;
         const minersForSource = _.filter(Game.creeps, c =>
             c.memory.role === 'miner' && c.memory.sourceId === source.id
-        );
-        if (minersForSource.length === 0 && spawn.room.energyAvailable >= 300) {
+        ).length;
+        if (minersForSource === 0 && room.energyAvailable >= 300) {
             spawn.spawnCreep([WORK, WORK, CARRY, MOVE], 'Miner' + Game.time, {
-                memory: { role: 'miner', sourceId: source.id }
+                memory: { role: 'miner', sourceId: source.id, homeRoom: rn }
             });
             return;
         }
     }
 
-    // Harvesters — always maintain 2 in home room first
-    const harvesterCount = _.filter(Game.creeps, c => c.memory.role === 'harvester').length;
-    if (harvesterCount < 2 && spawn.room.energyAvailable >= 300) {
-        spawnStandardCreep(spawn, 'harvester');
+    // Harvesters — always keep 2 in room
+    if (roomCreeps('harvester', rn) < 2 && room.energyAvailable >= 300) {
+        spawnStandard(spawn, 'harvester', rn);
         return;
     }
 
-    // Pioneers — 3 per newly claimed room without a spawn
-    for (const roomName in Game.rooms) {
-        const room = Game.rooms[roomName];
-        if (!room.controller || !room.controller.my) continue;
-        if (room.name === spawn.room.name) continue;
-        const hasSpawn = cache.find(room, FIND_MY_STRUCTURES)
+    // Pioneers — for each claimed room without its own spawn
+    for (const targetRoomName in Game.rooms) {
+        const targetRoom = Game.rooms[targetRoomName];
+        if (!targetRoom.controller || !targetRoom.controller.my) continue;
+        if (targetRoom.name === rn) continue;
+        const targetHasSpawn = cache.find(targetRoom, FIND_MY_STRUCTURES)
             .some(s => s.structureType === STRUCTURE_SPAWN);
-        if (hasSpawn) continue;
+        if (targetHasSpawn) continue;
         const pioneers = _.filter(Game.creeps, c =>
-            c.memory.role === 'pioneer' && c.memory.targetRoom === roomName
-        );
-        if (pioneers.length < 3 && spawn.room.energyAvailable >= 550) {
+            c.memory.role === 'pioneer' && c.memory.targetRoom === targetRoomName
+        ).length;
+        if (pioneers < 3 && room.energyAvailable >= 550) {
             spawn.spawnCreep([WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], 'Pioneer' + Game.time, {
-                memory: { role: 'pioneer', targetRoom: roomName }
+                memory: { role: 'pioneer', targetRoom: targetRoomName, homeRoom: rn }
             });
             return;
         }
     }
 
-    // Standard roles — 2 each
-    const roles = ['builder', 'upgrader', 'repairer'];
-    for (const role of roles) {
-        const count = _.filter(Game.creeps, c => c.memory.role === role).length;
-        if (count < 2 && spawn.room.energyAvailable >= 300) {
-            spawnStandardCreep(spawn, role);
+    // Standard roles — 2 each per room
+    for (const role of ['builder', 'upgrader', 'repairer']) {
+        if (roomCreeps(role, rn) < 2 && room.energyAvailable >= 300) {
+            spawnStandard(spawn, role, rn);
             return;
         }
     }
 
-    // Scout — 1 per home room, low priority
-    const scouts = _.filter(Game.creeps, c => c.memory.role === 'scout');
-    if (scouts.length === 0 && spawn.room.energyAvailable >= 50) {
-        spawn.spawnCreep([MOVE], 'Scout' + Game.time, { memory: { role: 'scout' } });
+    // Scout — 1 per room
+    if (roomCreeps('scout', rn) === 0 && room.energyAvailable >= 50) {
+        spawn.spawnCreep([MOVE], 'Scout' + Game.time, { memory: { role: 'scout', homeRoom: rn } });
         return;
     }
 
-    // Claimer — when Memory.claimTarget is set (auto or manual)
+    // Claimer — when a target is set (auto or manual)
     if (Memory.claimTarget) {
-        const claimers = _.filter(Game.creeps, c => c.memory.role === 'claimer');
-        if (claimers.length === 0 && spawn.room.energyAvailable >= 650) {
+        const claimers = _.filter(Game.creeps, c => c.memory.role === 'claimer').length;
+        if (claimers === 0 && room.energyAvailable >= 650) {
             spawn.spawnCreep([CLAIM, MOVE], 'Claimer' + Game.time, {
-                memory: { role: 'claimer', targetRoom: Memory.claimTarget }
+                memory: { role: 'claimer', targetRoom: Memory.claimTarget, homeRoom: rn }
             });
         }
     }
 }
 
-function spawnStandardCreep(spawn, role) {
+function spawnStandard(spawn, role, homeRoom) {
     const name = role.charAt(0).toUpperCase() + role.slice(1) + Game.time;
-    console.log('Spawning new ' + role + ': ' + name);
     const body = [WORK, CARRY, MOVE, MOVE];
     const energy = spawn.room.energyAvailable;
-    if (energy >= 400) { body.push(CARRY, MOVE); }
-    if (energy >= 500) { body.push(CARRY, MOVE); }
-    spawn.spawnCreep(body, name, { memory: { role } });
+    if (energy >= 400) body.push(CARRY, MOVE);
+    if (energy >= 500) body.push(CARRY, MOVE);
+    spawn.spawnCreep(body, name, { memory: { role, homeRoom } });
 }
 
 module.exports.loop = function () {

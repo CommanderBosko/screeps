@@ -28,12 +28,10 @@ const roleRepairer = {
                 return;
             }
 
-            // Repair non-wall/rampart structures first
             const damaged = cache.find(creep.room, FIND_STRUCTURES)
                 .filter(s => s.hits < s.hitsMax &&
                     s.structureType !== STRUCTURE_WALL &&
                     s.structureType !== STRUCTURE_RAMPART);
-
             if (damaged.length > 0) {
                 damaged.sort((a, b) => a.hits - b.hits);
                 if (creep.repair(damaged[0]) === ERR_NOT_IN_RANGE) {
@@ -43,11 +41,9 @@ const roleRepairer = {
                 return;
             }
 
-            // Maintain ramparts/walls up to the HP floor
             const hpTarget = rampartTarget(creep.room);
             const weakBarrier = cache.find(creep.room, FIND_STRUCTURES)
                 .filter(s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) && s.hits < hpTarget);
-
             if (weakBarrier.length > 0) {
                 weakBarrier.sort((a, b) => a.hits - b.hits);
                 if (creep.repair(weakBarrier[0]) === ERR_NOT_IN_RANGE) {
@@ -57,8 +53,11 @@ const roleRepairer = {
                 return;
             }
 
+            const roomSpawns = cache.find(creep.room, FIND_MY_SPAWNS);
+            if (roomSpawns.length > 0) {
+                creep.moveTo(roomSpawns[0].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
+            }
             creep.say('💤 Idle');
-            creep.moveTo(Game.spawns['Spawn1'].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
         } else {
             roleRepairer.getEnergy(creep);
         }
@@ -76,10 +75,7 @@ const roleRepairer = {
         }
         const sources = cache.find(creep.room, FIND_SOURCES);
         if (sources.length === 0) return;
-        const spawn = Game.spawns['Spawn1'];
-        const target = sources.length > 1
-            ? (spawn.pos.getRangeTo(sources[0]) > spawn.pos.getRangeTo(sources[1]) ? sources[0] : sources[1])
-            : sources[0];
+        const target = creep.pos.findClosestByRange(sources);
         if (creep.harvest(target) === ERR_NOT_IN_RANGE) {
             creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
