@@ -54,6 +54,12 @@ const roleRepairer = {
                 return;
             }
 
+            if (creep.store.getFreeCapacity() > 0) {
+                creep.memory.repairing = false;
+                creep.memory.sourceId = null;
+                roleRepairer.getEnergy(creep);
+                return;
+            }
             const roomSpawns = cache.find(creep.room, FIND_MY_SPAWNS);
             if (roomSpawns.length > 0) {
                 creep.moveTo(roomSpawns[0].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
