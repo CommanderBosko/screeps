@@ -81,7 +81,17 @@ function checkSafeMode() {
 function selectAttackTarget() {
     if (!Memory.attackEnabled || Memory.attackTarget) return;
 
+    const ownedRooms = Object.values(Game.rooms)
+        .filter(r => r.controller && r.controller.my).length;
+    if (Game.gcl.level <= ownedRooms) return; // no GCL headroom
+
     const data = Memory.scoutData || {};
+
+    // Don't attack if there are peaceful rooms we can claim instead
+    const hasClaimableRoom = Object.values(data)
+        .some(d => !d.owner && !d.hostile && d.sources > 0);
+    if (hasClaimableRoom) return;
+
     const candidates = Object.entries(data)
         .filter(([, d]) => d.owner && !d.safeMode && d.rcl > 0 && d.rcl <= 4 && d.towers <= 1)
         .sort(([, a], [, b]) => (a.towers * 10 + a.rcl) - (b.towers * 10 + b.rcl));
