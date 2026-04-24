@@ -3,7 +3,15 @@ const cache = require('cache');
 const roleHarvester = {
     run: function (creep) {
         if (creep.store.getFreeCapacity() === 0) {
-            roleHarvester.transferEnergy(creep);
+            const target = roleHarvester.getTransferTarget(creep);
+            if (target) {
+                roleHarvester.transferEnergy(creep);
+            } else {
+                if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(creep.room.controller, { visualizePathStyle: { stroke: '#ffffff' } });
+                }
+                creep.say('⬆️');
+            }
             return;
         }
         roleHarvester.getEnergy(creep);
