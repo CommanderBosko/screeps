@@ -13,7 +13,6 @@ function constructionPriority(rcl) {
     return [
         STRUCTURE_EXTENSION,
         STRUCTURE_CONTAINER,
-        STRUCTURE_TOWER,
         STRUCTURE_STORAGE,
         STRUCTURE_ROAD,
         STRUCTURE_WALL,
