@@ -12,6 +12,7 @@ const roleHauler = require('role.hauler');
 const towerLogic = require('role.tower');
 const defense = require('defense');
 const cache = require('cache');
+const planner = require('planner');
 
 function wipeMemory() {
     for (const name in Memory.creeps) {
@@ -354,6 +355,7 @@ module.exports.loop = function () {
     if (Game.time % 100 === 0) {
         for (const roomName in Game.rooms) defense.run(Game.rooms[roomName]);
     }
+    for (const roomName in Game.rooms) planner.run(Game.rooms[roomName]);
     selectAttackTarget();
     checkAttackComplete();
     selectClaimTarget();
