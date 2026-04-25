@@ -231,8 +231,10 @@ function spawnForRoom(spawn) {
         }
     }
 
-    // Harvesters — always keep 2 in room
-    if (roomCreeps('harvester', rn) < 2 && room.energyAvailable >= 300) {
+    // Harvesters — 3 at RCL 1-3, 2 otherwise
+    const rcl = room.controller ? room.controller.level : 0;
+    const harvesterMax = rcl <= 3 ? 3 : 2;
+    if (roomCreeps('harvester', rn) < harvesterMax && room.energyAvailable >= 300) {
         spawnStandard(spawn, 'harvester', rn);
         return;
     }
