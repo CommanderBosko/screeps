@@ -123,13 +123,27 @@ function checkAttackComplete() {
 function selectClaimTarget() {
     if (Memory.claimTarget) return;
     const ownedRooms = Object.values(Game.rooms)
-        .filter(r => r.controller && r.controller.my).length;
-    if (Game.gcl.level <= ownedRooms) return;
+        .filter(r => r.controller && r.controller.my);
+    if (Game.gcl.level <= ownedRooms.length) return;
+    if (!ownedRooms.some(r => r.controller.level >= 4)) return;
 
     const data = Memory.scoutData || {};
+
+    const adjacentRooms = new Set();
+    for (const room of ownedRooms) {
+        for (const name of Object.values(Game.map.describeExits(room.name))) {
+            adjacentRooms.add(name);
+        }
+    }
+
     const candidates = Object.entries(data)
         .filter(([, d]) => !d.owner && !d.hostile && d.sources > 0)
-        .sort(([, a], [, b]) => b.sources - a.sources);
+        .sort(([nameA, a], [nameB, b]) => {
+            const adjA = adjacentRooms.has(nameA) ? 0 : 1;
+            const adjB = adjacentRooms.has(nameB) ? 0 : 1;
+            if (adjA !== adjB) return adjA - adjB;
+            return b.sources - a.sources;
+        });
 
     if (candidates.length > 0) {
         Memory.claimTarget = candidates[0][0];
