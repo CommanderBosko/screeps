@@ -271,7 +271,8 @@ function spawnForRoom(spawn) {
     }
 
     // Standard roles — 2 each per room
-    for (const [role, max] of [['builder', 2], ['upgrader', 3], ['repairer', 1]]) {
+    const hasTower = cache.find(room, FIND_MY_STRUCTURES).some(s => s.structureType === STRUCTURE_TOWER);
+    for (const [role, max] of [['builder', 2], ['upgrader', 3], ['repairer', hasTower ? 0 : 1]]) {
         if (roomCreeps(role, rn) < max && room.energyAvailable >= 300) {
             spawnStandard(spawn, role, rn);
             return;
