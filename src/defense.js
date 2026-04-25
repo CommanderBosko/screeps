@@ -133,7 +133,8 @@ const defense = {
 
         for (const target of targets) {
             const path = spawn.pos.findPathTo(target, { ignoreCreeps: true });
-            for (const step of path) {
+            for (let i = 0; i < path.length - 1; i++) {
+                const step = path[i];
                 const pos = new RoomPosition(step.x, step.y, room.name);
                 const hasRoad = pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType === STRUCTURE_ROAD);
                 const hasSite = pos.lookFor(LOOK_CONSTRUCTION_SITES).some(s => s.structureType === STRUCTURE_ROAD);
