@@ -31,10 +31,15 @@ const roleUpgrader = {
             }
             return;
         }
-        const sources = cache.find(creep.room, FIND_SOURCES);
-        if (sources.length === 0) return;
-        if (creep.harvest(sources[0]) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(sources[0], { visualizePathStyle: { stroke: '#ffaa00' } });
+        if (!creep.memory.sourceId) cache.assignSource(creep, 'upgrader');
+        let source = Game.getObjectById(creep.memory.sourceId);
+        if (!source || source.energy === 0) {
+            const active = cache.find(creep.room, FIND_SOURCES).filter(s => s.energy > 0);
+            source = active.length > 0 ? creep.pos.findClosestByRange(active) : source;
+        }
+        if (!source) return;
+        if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
     }
 };

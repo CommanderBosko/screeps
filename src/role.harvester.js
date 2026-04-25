@@ -39,8 +39,13 @@ const roleHarvester = {
         }
 
         if (!creep.memory.sourceId) cache.assignSource(creep, 'harvester');
-        const source = Game.getObjectById(creep.memory.sourceId);
-        if (source && creep.harvest(source) === ERR_NOT_IN_RANGE) {
+        let source = Game.getObjectById(creep.memory.sourceId);
+        if (!source || source.energy === 0) {
+            const active = cache.find(creep.room, FIND_SOURCES).filter(s => s.energy > 0);
+            source = active.length > 0 ? creep.pos.findClosestByRange(active) : source;
+        }
+        if (!source) return;
+        if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
             creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
         creep.say('⛏️');
