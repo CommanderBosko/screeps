@@ -1,14 +1,25 @@
 const cache = require('cache');
 
-const constructionPriority = [
-    STRUCTURE_EXTENSION,
-    STRUCTURE_CONTAINER,
-    STRUCTURE_TOWER,
-    STRUCTURE_STORAGE,
-    STRUCTURE_ROAD,
-    STRUCTURE_WALL,
-    STRUCTURE_RAMPART,
-];
+function constructionPriority(rcl) {
+    if (rcl >= 3) return [
+        STRUCTURE_TOWER,
+        STRUCTURE_EXTENSION,
+        STRUCTURE_CONTAINER,
+        STRUCTURE_STORAGE,
+        STRUCTURE_ROAD,
+        STRUCTURE_WALL,
+        STRUCTURE_RAMPART,
+    ];
+    return [
+        STRUCTURE_EXTENSION,
+        STRUCTURE_CONTAINER,
+        STRUCTURE_TOWER,
+        STRUCTURE_STORAGE,
+        STRUCTURE_ROAD,
+        STRUCTURE_WALL,
+        STRUCTURE_RAMPART,
+    ];
+}
 
 const roleBuilder = {
     run: function (creep) {
@@ -25,11 +36,12 @@ const roleBuilder = {
         if (creep.memory.building) {
             const targets = cache.find(creep.room, FIND_CONSTRUCTION_SITES);
             if (targets.length > 0) {
+                const priority = constructionPriority(creep.room.controller ? creep.room.controller.level : 0);
                 targets.sort((a, b) => {
-                    const pa = constructionPriority.indexOf(a.structureType);
-                    const pb = constructionPriority.indexOf(b.structureType);
-                    return (pa === -1 ? constructionPriority.length : pa) -
-                           (pb === -1 ? constructionPriority.length : pb);
+                    const pa = priority.indexOf(a.structureType);
+                    const pb = priority.indexOf(b.structureType);
+                    return (pa === -1 ? priority.length : pa) -
+                           (pb === -1 ? priority.length : pb);
                 });
                 if (creep.build(targets[0]) === ERR_NOT_IN_RANGE) {
                     creep.moveTo(targets[0], { visualizePathStyle: { stroke: '#ffffff' } });
