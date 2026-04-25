@@ -271,8 +271,8 @@ function spawnForRoom(spawn) {
     }
 
     // Standard roles — 2 each per room
-    for (const role of ['builder', 'upgrader', 'repairer']) {
-        if (roomCreeps(role, rn) < 2 && room.energyAvailable >= 300) {
+    for (const [role, max] of [['builder', 2], ['upgrader', 3], ['repairer', 1]]) {
+        if (roomCreeps(role, rn) < max && room.energyAvailable >= 300) {
             spawnStandard(spawn, role, rn);
             return;
         }
