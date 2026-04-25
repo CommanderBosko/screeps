@@ -81,7 +81,7 @@ const roleRepairer = {
             }
             return;
         }
-        if (!creep.memory.sourceId) cache.assignSource(creep, 'repairer');
+        if (!creep.memory.sourceId) cache.assignSource(creep);
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) { creep.memory.sourceId = null; return; }
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {

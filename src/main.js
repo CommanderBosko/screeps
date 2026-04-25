@@ -347,7 +347,7 @@ function getBody(role, energy) {
 function spawnStandard(spawn, role, homeRoom) {
     const name = role.charAt(0).toUpperCase() + role.slice(1) + Game.time;
     const memory = { role, homeRoom };
-    const sourceId = cache.pickSource(spawn.room, role);
+    const sourceId = cache.pickSource(spawn.room);
     if (sourceId) memory.sourceId = sourceId;
     spawn.spawnCreep(getBody(role, spawn.room.energyAvailable), name, { memory });
 }

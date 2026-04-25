@@ -18,24 +18,24 @@ const cache = {
         return this._data[key];
     },
 
-    // Return the least-contested source ID for a given room and role group.
-    pickSource: function (room, role) {
+    // Return the least-contested source ID for a given room across all roles.
+    pickSource: function (room) {
         const sources = this.find(room, FIND_SOURCES);
         if (sources.length === 0) return null;
         const counts = {};
         for (const s of sources) counts[s.id] = 0;
         for (const name in Game.creeps) {
             const c = Game.creeps[name];
-            if (c.memory.role === role && c.memory.sourceId) {
-                if (counts[c.memory.sourceId] !== undefined) counts[c.memory.sourceId]++;
+            if (c.memory.sourceId && counts[c.memory.sourceId] !== undefined) {
+                counts[c.memory.sourceId]++;
             }
         }
         return sources.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b).id;
     },
 
-    // Assign the least-contested source to creep.memory.sourceId, balancing across a role group.
-    assignSource: function (creep, role) {
-        const id = this.pickSource(creep.room, role);
+    // Assign the least-contested source to creep.memory.sourceId.
+    assignSource: function (creep) {
+        const id = this.pickSource(creep.room);
         if (id) creep.memory.sourceId = id;
     },
 
