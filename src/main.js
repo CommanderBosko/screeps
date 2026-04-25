@@ -225,8 +225,8 @@ function spawnForRoom(spawn) {
         const minersForSource = _.filter(Game.creeps, c =>
             c.memory.role === 'miner' && c.memory.sourceId === source.id
         ).length;
-        if (minersForSource === 0 && room.energyAvailable >= 300) {
-            spawn.spawnCreep([WORK, WORK, CARRY, MOVE], 'Miner' + Game.time, {
+        if (minersForSource === 0 && room.energyAvailable >= 200) {
+            spawn.spawnCreep(getBody('miner', room.energyAvailable), 'Miner' + Game.time, {
                 memory: { role: 'miner', sourceId: source.id, homeRoom: rn }
             });
             return;
@@ -237,7 +237,7 @@ function spawnForRoom(spawn) {
 
     // Harvesters — 3 at RCL 1-3, replaced by miners+haulers at RCL 4+
     const harvesterMax = rcl <= 3 ? 3 : 0;
-    if (roomCreeps('harvester', rn) < harvesterMax && room.energyAvailable >= 300) {
+    if (roomCreeps('harvester', rn) < harvesterMax && room.energyAvailable >= 200) {
         spawnStandard(spawn, 'harvester', rn);
         return;
     }
@@ -247,7 +247,7 @@ function spawnForRoom(spawn) {
         const sourcesWithContainer = cache.find(room, FIND_SOURCES).filter(s =>
             s.pos.findInRange(FIND_STRUCTURES, 1, { filter: t => t.structureType === STRUCTURE_CONTAINER }).length > 0
         ).length;
-        if (roomCreeps('hauler', rn) < sourcesWithContainer && room.energyAvailable >= 300) {
+        if (roomCreeps('hauler', rn) < sourcesWithContainer && room.energyAvailable >= 150) {
             spawnStandard(spawn, 'hauler', rn);
             return;
         }
@@ -290,7 +290,7 @@ function spawnForRoom(spawn) {
     const hasTower = cache.find(room, FIND_MY_STRUCTURES).some(s => s.structureType === STRUCTURE_TOWER);
     const upgraderMax = rcl >= 4 && rcl <= 5 ? 4 : 3;
     for (const [role, max] of [['builder', 2], ['upgrader', upgraderMax], ['repairer', hasTower ? 0 : 1]]) {
-        if (roomCreeps(role, rn) < max && room.energyAvailable >= 300) {
+        if (roomCreeps(role, rn) < max && room.energyAvailable >= 200) {
             spawnStandard(spawn, role, rn);
             return;
         }
@@ -313,13 +313,37 @@ function spawnForRoom(spawn) {
     }
 }
 
+function getBody(role, energy) {
+    switch (role) {
+        case 'miner':
+            return energy >= 550
+                ? [WORK, WORK, WORK, WORK, WORK, MOVE]
+                : [WORK, CARRY, MOVE];
+        case 'hauler':
+            return energy >= 450
+                ? [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE]
+                : [CARRY, CARRY, MOVE];
+        case 'harvester':
+            return energy >= 400
+                ? [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
+                : [WORK, CARRY, MOVE];
+        case 'upgrader':
+            return energy >= 450
+                ? [WORK, WORK, WORK, CARRY, MOVE, MOVE]
+                : [WORK, CARRY, MOVE];
+        case 'builder':
+        case 'repairer':
+            return energy >= 400
+                ? [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
+                : [WORK, CARRY, MOVE];
+        default:
+            return [WORK, CARRY, MOVE];
+    }
+}
+
 function spawnStandard(spawn, role, homeRoom) {
     const name = role.charAt(0).toUpperCase() + role.slice(1) + Game.time;
-    const body = [WORK, CARRY, MOVE, MOVE];
-    const energy = spawn.room.energyAvailable;
-    if (energy >= 400) body.push(CARRY, MOVE);
-    if (energy >= 500) body.push(CARRY, MOVE);
-    spawn.spawnCreep(body, name, { memory: { role, homeRoom } });
+    spawn.spawnCreep(getBody(role, spawn.room.energyAvailable), name, { memory: { role, homeRoom } });
 }
 
 module.exports.loop = function () {
