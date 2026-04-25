@@ -18,20 +18,25 @@ const cache = {
         return this._data[key];
     },
 
-    // Assign the least-contested source to creep.memory.sourceId, balancing across a role group.
-    assignSource: function (creep, role) {
-        const sources = this.find(creep.room, FIND_SOURCES);
-        if (sources.length === 0) return;
+    // Return the least-contested source ID for a given room and role group.
+    pickSource: function (room, role) {
+        const sources = this.find(room, FIND_SOURCES);
+        if (sources.length === 0) return null;
         const counts = {};
         for (const s of sources) counts[s.id] = 0;
         for (const name in Game.creeps) {
             const c = Game.creeps[name];
-            if (c.memory.role === role && c.memory.sourceId && c.id !== creep.id) {
+            if (c.memory.role === role && c.memory.sourceId) {
                 if (counts[c.memory.sourceId] !== undefined) counts[c.memory.sourceId]++;
             }
         }
-        const target = sources.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b);
-        creep.memory.sourceId = target.id;
+        return sources.reduce((a, b) => counts[a.id] <= counts[b.id] ? a : b).id;
+    },
+
+    // Assign the least-contested source to creep.memory.sourceId, balancing across a role group.
+    assignSource: function (creep, role) {
+        const id = this.pickSource(creep.room, role);
+        if (id) creep.memory.sourceId = id;
     },
 
     // Pick up dropped energy or withdraw from tombstones/ruins. Returns true if acted.
