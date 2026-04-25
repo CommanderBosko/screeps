@@ -242,10 +242,15 @@ function spawnForRoom(spawn) {
         return;
     }
 
-    // Haulers — 2 at RCL 4-5, none otherwise
-    if (rcl >= 4 && rcl <= 5 && roomCreeps('hauler', rn) < 2 && room.energyAvailable >= 300) {
-        spawnStandard(spawn, 'hauler', rn);
-        return;
+    // Haulers — 1 per source with a container at RCL 4-5
+    if (rcl >= 4 && rcl <= 5) {
+        const sourcesWithContainer = cache.find(room, FIND_SOURCES).filter(s =>
+            s.pos.findInRange(FIND_STRUCTURES, 1, { filter: t => t.structureType === STRUCTURE_CONTAINER }).length > 0
+        ).length;
+        if (roomCreeps('hauler', rn) < sourcesWithContainer && room.energyAvailable >= 300) {
+            spawnStandard(spawn, 'hauler', rn);
+            return;
+        }
     }
 
     // Pioneers — for each claimed room without its own spawn
