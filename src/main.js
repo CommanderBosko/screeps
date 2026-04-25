@@ -8,6 +8,7 @@ const roleDefender = require('role.defender');
 const roleScout = require('role.scout');
 const rolePioneer = require('role.pioneer');
 const roleAttacker = require('role.attacker');
+const roleHauler = require('role.hauler');
 const towerLogic = require('role.tower');
 const defense = require('defense');
 const cache = require('cache');
@@ -43,6 +44,7 @@ function setRoles() {
             'scout': roleScout,
             'pioneer': rolePioneer,
             'attacker': roleAttacker,
+            'hauler': roleHauler,
         }[creep.memory.role];
         if (roleObj) roleObj.run(creep);
     }
@@ -231,11 +233,18 @@ function spawnForRoom(spawn) {
         }
     }
 
-    // Harvesters — 3 at RCL 1-3, 2 otherwise
     const rcl = room.controller ? room.controller.level : 0;
-    const harvesterMax = rcl <= 3 ? 3 : 2;
+
+    // Harvesters — 3 at RCL 1-3, replaced by miners+haulers at RCL 4+
+    const harvesterMax = rcl <= 3 ? 3 : 0;
     if (roomCreeps('harvester', rn) < harvesterMax && room.energyAvailable >= 300) {
         spawnStandard(spawn, 'harvester', rn);
+        return;
+    }
+
+    // Haulers — 2 at RCL 4-5, none otherwise
+    if (rcl >= 4 && rcl <= 5 && roomCreeps('hauler', rn) < 2 && room.energyAvailable >= 300) {
+        spawnStandard(spawn, 'hauler', rn);
         return;
     }
 
@@ -274,7 +283,8 @@ function spawnForRoom(spawn) {
 
     // Standard roles — 2 each per room
     const hasTower = cache.find(room, FIND_MY_STRUCTURES).some(s => s.structureType === STRUCTURE_TOWER);
-    for (const [role, max] of [['builder', 2], ['upgrader', 3], ['repairer', hasTower ? 0 : 1]]) {
+    const upgraderMax = rcl >= 4 && rcl <= 5 ? 4 : 3;
+    for (const [role, max] of [['builder', 2], ['upgrader', upgraderMax], ['repairer', hasTower ? 0 : 1]]) {
         if (roomCreeps(role, rn) < max && room.energyAvailable >= 300) {
             spawnStandard(spawn, role, rn);
             return;
