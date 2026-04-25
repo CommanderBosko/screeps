@@ -296,8 +296,10 @@ function spawnForRoom(spawn) {
         }
     }
 
-    // Scout — 1 per room
-    if (roomCreeps('scout', rn) === 0 && room.energyAvailable >= 50) {
+    // Scout — only when we have GCL headroom and are ready to expand (RCL 4+)
+    const ownedRoomCount = Object.values(Game.rooms).filter(r => r.controller && r.controller.my).length;
+    const readyToExpand = rcl >= 4 && Game.gcl.level > ownedRoomCount;
+    if (readyToExpand && roomCreeps('scout', rn) === 0 && room.energyAvailable >= 50) {
         spawn.spawnCreep([MOVE], 'Scout' + Game.time, { memory: { role: 'scout', homeRoom: rn } });
         return;
     }

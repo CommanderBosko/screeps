@@ -28,7 +28,10 @@ const defense = {
         }
     },
 
-    // Auto-place a tower when RCL unlocks a new slot
+    // Auto-place a tower when RCL unlocks a new slot.
+    // Tower 1: near spawn (protect the core).
+    // Tower 2: midpoint of spawn and controller (second axis of coverage).
+    // Tower 3+: 5 tiles inside the most exposed exit (punish entry).
     placeTowers: function (room) {
         const maxTowers = CONTROLLER_STRUCTURES[STRUCTURE_TOWER][room.controller.level] || 0;
         if (maxTowers === 0) return;
@@ -36,25 +39,52 @@ const defense = {
         const sites = room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.structureType === STRUCTURE_TOWER }).length;
         if (existing + sites >= maxTowers) return;
 
-        // Place near centroid of existing structures for maximum coverage
-        const structs = room.find(FIND_MY_STRUCTURES);
-        if (structs.length === 0) return;
-        const cx = Math.round(structs.reduce((n, s) => n + s.pos.x, 0) / structs.length);
-        const cy = Math.round(structs.reduce((n, s) => n + s.pos.y, 0) / structs.length);
-        const terrain = room.getTerrain();
+        const towerIndex = existing + sites;
+        const spawn = room.find(FIND_MY_SPAWNS)[0];
+        if (!spawn) return;
 
+        let anchor;
+        if (towerIndex === 0) {
+            anchor = spawn.pos;
+        } else if (towerIndex === 1 && room.controller) {
+            anchor = new RoomPosition(
+                Math.round((spawn.pos.x + room.controller.pos.x) / 2),
+                Math.round((spawn.pos.y + room.controller.pos.y) / 2),
+                room.name
+            );
+        } else {
+            const exitDirs = [
+                { find: FIND_EXIT_TOP,    dx: 0,  dy: 5  },
+                { find: FIND_EXIT_BOTTOM, dx: 0,  dy: -5 },
+                { find: FIND_EXIT_LEFT,   dx: 5,  dy: 0  },
+                { find: FIND_EXIT_RIGHT,  dx: -5, dy: 0  },
+            ];
+            let best = null, bestCount = 0;
+            for (const { find, dx, dy } of exitDirs) {
+                const tiles = room.find(find);
+                if (tiles.length > bestCount) {
+                    bestCount = tiles.length;
+                    const ex = Math.round(tiles.reduce((n, p) => n + p.x, 0) / tiles.length) + dx;
+                    const ey = Math.round(tiles.reduce((n, p) => n + p.y, 0) / tiles.length) + dy;
+                    best = new RoomPosition(Math.max(2, Math.min(47, ex)), Math.max(2, Math.min(47, ey)), room.name);
+                }
+            }
+            anchor = best || spawn.pos;
+        }
+
+        const terrain = room.getTerrain();
         for (let r = 0; r <= 15; r++) {
             for (let dx = -r; dx <= r; dx++) {
                 for (let dy = -r; dy <= r; dy++) {
                     if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
-                    const x = cx + dx, y = cy + dy;
+                    const x = anchor.x + dx, y = anchor.y + dy;
                     if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
                     const pos = new RoomPosition(x, y, room.name);
                     if (pos.lookFor(LOOK_STRUCTURES).length > 0) continue;
                     if (pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0) continue;
                     if (room.createConstructionSite(x, y, STRUCTURE_TOWER) === OK) {
-                        console.log('🗼 Tower site placed in ' + room.name + ' at ' + x + ',' + y);
+                        console.log('🗼 Tower ' + (towerIndex + 1) + ' placed in ' + room.name + ' at ' + x + ',' + y);
                         return;
                     }
                 }
