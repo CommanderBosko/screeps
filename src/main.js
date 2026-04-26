@@ -299,6 +299,20 @@ function spawnForRoom(spawn) {
     const roomSources = cache.find(room, FIND_SOURCES);
     const roomMyStructs = cache.find(room, FIND_MY_STRUCTURES);
 
+    // Emergency: if all income creeps are gone and spawn is starving, skip normal thresholds
+    if (rcl <= 3 && roomCreeps('harvester', rn) === 0 && room.energyAvailable >= 200) {
+        spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
+            memory: { role: 'harvester', homeRoom: rn }
+        });
+        return;
+    }
+    if (rcl >= 4 && roomCreeps('miner', rn) === 0 && roomCreeps('hauler', rn) === 0 && room.energyAvailable >= 200) {
+        spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
+            memory: { role: 'harvester', homeRoom: rn }
+        });
+        return;
+    }
+
     // Miners — one per source with adjacent container; pre-spawn when current miner is nearly dead.
     // Only at RCL 4+ where haulers can also exist; harvesters cover RCL 1-3.
     if (rcl >= 4) for (const source of roomSources) {

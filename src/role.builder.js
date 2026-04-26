@@ -148,6 +148,9 @@ const roleBuilder = {
             return;
         }
 
+        // Don't compete with harvesters for source access when spawn is low
+        if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5) return;
+
         // Mine directly
         if (!creep.memory.sourceId) cache.assignSource(creep);
         const source = Game.getObjectById(creep.memory.sourceId);
