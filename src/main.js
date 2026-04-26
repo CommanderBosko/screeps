@@ -209,6 +209,38 @@ function placeSpawnNearController(room) {
     }
 }
 
+// Redistribute creeps so each source has an equal share. Runs every 50 ticks.
+// Fixes drift caused by historical imbalances or simultaneous lazy-assignment.
+function rebalanceSources(room) {
+    const sources = cache.find(room, FIND_SOURCES);
+    if (sources.length < 2) return;
+
+    const bucket = {};
+    for (const s of sources) bucket[s.id] = [];
+
+    for (const name in Game.creeps) {
+        const c = Game.creeps[name];
+        if (c.memory.homeRoom !== room.name) continue;
+        if (c.memory.sourceId && bucket[c.memory.sourceId] !== undefined) {
+            bucket[c.memory.sourceId].push(c);
+        }
+    }
+
+    const ids = sources.map(s => s.id);
+    let moved = true;
+    while (moved) {
+        moved = false;
+        const maxId = ids.reduce((a, b) => bucket[a].length >= bucket[b].length ? a : b);
+        const minId = ids.reduce((a, b) => bucket[a].length <= bucket[b].length ? a : b);
+        if (bucket[maxId].length - bucket[minId].length > 1) {
+            const creep = bucket[maxId].pop();
+            creep.memory.sourceId = minId;
+            bucket[minId].push(creep);
+            moved = true;
+        }
+    }
+}
+
 // Ticks before death at which we pre-spawn a miner replacement (spawn time + travel buffer)
 const MINER_RESPAWN_TTL = 75;
 // TTL below which idle spawns will opportunistically renew adjacent creeps
@@ -403,6 +435,9 @@ module.exports.loop = function () {
     migrateCreepMemory();
     if (Game.time % 100 === 0) {
         for (const roomName in Game.rooms) defense.run(Game.rooms[roomName]);
+    }
+    if (Game.time % 50 === 0) {
+        for (const roomName in Game.rooms) rebalanceSources(Game.rooms[roomName]);
     }
     for (const roomName in Game.rooms) planner.run(Game.rooms[roomName]);
     selectAttackTarget();

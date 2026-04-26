@@ -24,7 +24,6 @@ const roleBuilder = {
     run: function (creep) {
         if (creep.memory.building && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.building = false;
-            creep.memory.sourceId = null;
             creep.say('🔄 Harvest');
         }
         if (!creep.memory.building && creep.store.getFreeCapacity() === 0) {

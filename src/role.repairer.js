@@ -8,7 +8,6 @@ const roleRepairer = {
     run: function (creep) {
         if (creep.memory.repairing && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.repairing = false;
-            creep.memory.sourceId = null;
             creep.say('🔄 Harvest');
         }
         if (!creep.memory.repairing && creep.store.getFreeCapacity() === 0) {
