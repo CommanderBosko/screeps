@@ -299,8 +299,9 @@ function spawnForRoom(spawn) {
     const roomSources = cache.find(room, FIND_SOURCES);
     const roomMyStructs = cache.find(room, FIND_MY_STRUCTURES);
 
-    // Miners — one per source with adjacent container; pre-spawn when current miner is nearly dead
-    for (const source of roomSources) {
+    // Miners — one per source with adjacent container; pre-spawn when current miner is nearly dead.
+    // Only at RCL 4+ where haulers can also exist; harvesters cover RCL 1-3.
+    if (rcl >= 4) for (const source of roomSources) {
         const hasContainer = source.pos.findInRange(FIND_STRUCTURES, 1, {
             filter: s => s.structureType === STRUCTURE_CONTAINER
         }).length > 0;
@@ -310,7 +311,10 @@ function spawnForRoom(spawn) {
         );
         const dyingMiner = minersForSource.find(c => c.ticksToLive < MINER_RESPAWN_TTL);
         const needsMiner = minersForSource.length === 0 || dyingMiner;
-        if (needsMiner && minersForSource.length < 2 && room.energyAvailable >= 150) {
+        // Don't spawn a miner unless a hauler already exists or the room can afford one.
+        // A miner with no hauler will clog its container/receiver link and stop producing.
+        const haulerReady = roomCreeps('hauler', rn) > 0 || room.energyAvailable >= 150;
+        if (needsMiner && haulerReady && minersForSource.length < 2 && room.energyAvailable >= 150) {
             // Use energyCapacityAvailable so miner body scales with room, but cap at current energy.
             // Minimum body [WORK,MOVE]=150; don't spawn below that.
             const minerEnergy = Math.min(room.energyCapacityAvailable, room.energyAvailable);
