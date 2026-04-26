@@ -2,29 +2,9 @@ const defense = {
     run: function (room) {
         if (!room.controller || !room.controller.my) return;
         if (room.find(FIND_CONSTRUCTION_SITES).length >= 90) return;
-        // NOTE: Extensions, towers, containers, and roads are all owned by planner.js.
-        // Defense only handles reactive structures: ramparts on key structures and
-        // chokepoint walls at room exits.
-        defense.placeStructureRamparts(room);
+        // NOTE: Extensions, towers, containers, roads, and ramparts are all owned by planner.js.
+        // Defense only handles chokepoint walls at room exits.
         defense.placeChokepoints(room);
-    },
-
-    // Place ramparts on top of key structures so attackers must destroy the rampart first
-    placeStructureRamparts: function (room) {
-        const types = [
-            STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_STORAGE,
-            STRUCTURE_EXTENSION, STRUCTURE_TERMINAL, STRUCTURE_LAB
-        ];
-        const structs = room.find(FIND_MY_STRUCTURES, { filter: s => types.includes(s.structureType) });
-        for (const s of structs) {
-            const at = s.pos.lookFor(LOOK_STRUCTURES);
-            const atSite = s.pos.lookFor(LOOK_CONSTRUCTION_SITES);
-            const hasRampart = at.some(r => r.structureType === STRUCTURE_RAMPART);
-            const hasSite = atSite.some(r => r.structureType === STRUCTURE_RAMPART);
-            if (!hasRampart && !hasSite) {
-                room.createConstructionSite(s.pos, STRUCTURE_RAMPART);
-            }
-        }
     },
 
     // Seal room exits with walls, leaving a 1-tile gap per cluster for controlled access

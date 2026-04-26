@@ -363,14 +363,54 @@ function placeRoads(room, hub) {
             if (pos.x === spawn.pos.x && pos.y === spawn.pos.y) continue;
             if (ctrl && pos.x === ctrl.pos.x && pos.y === ctrl.pos.y) continue;
             if (sources.some(s => s.pos.x === pos.x && s.pos.y === pos.y)) continue;
-            // Never place a road on a tile that already has any structure
+            // Never place a road on a tile that already has a non-road, non-rampart structure.
+            // Roads can coexist with ramparts (common pattern for protected corridors).
+            // Spawns, extensions, towers, containers, links, etc. already block road placement
+            // via isClearForStructure — no need to re-check here.
             const existing = pos.lookFor(LOOK_STRUCTURES);
-            if (existing.length > 0) continue;
-            // Skip if a road construction site already exists here
+            if (existing.some(s => s.structureType !== STRUCTURE_ROAD && s.structureType !== STRUCTURE_RAMPART)) continue;
+            // Skip if a road already exists or a road site is already planned here
+            if (existing.some(s => s.structureType === STRUCTURE_ROAD)) continue;
             const hasSite = pos.lookFor(LOOK_CONSTRUCTION_SITES).some(s => s.structureType === STRUCTURE_ROAD);
             if (hasSite) continue;
             room.createConstructionSite(pos.x, pos.y, STRUCTURE_ROAD);
         }
+    }
+}
+
+// Place ramparts on every tile that hosts a critical structure or the room controller.
+// Ramparts provide HP protection — attackers must burn through the rampart before
+// reaching the structure underneath. Runs at RCL 2+ (earliest ramparts unlock).
+// Skips tiles that already have a built rampart or a rampart construction site.
+function placeRamparts(room) {
+    const rcl = room.controller ? room.controller.level : 0;
+    if (rcl < 2) return;
+
+    // Collect positions to protect
+    const positions = [];
+
+    // Critical built structures
+    const structTypes = [
+        STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
+        STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
+    ];
+    const structs = room.find(FIND_STRUCTURES, {
+        filter: s => structTypes.includes(s.structureType)
+    });
+    for (const s of structs) positions.push(s.pos);
+
+    // Room controller tile
+    if (room.controller) positions.push(room.controller.pos);
+
+    // Cache site count once; increment locally as we place to avoid repeated find() calls
+    let siteCount = totalSites(room);
+    for (const pos of positions) {
+        if (siteCount >= 90) return;
+        const at = pos.lookFor(LOOK_STRUCTURES);
+        if (at.some(s => s.structureType === STRUCTURE_RAMPART)) continue;
+        const atSite = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+        if (atSite.some(s => s.structureType === STRUCTURE_RAMPART)) continue;
+        if (room.createConstructionSite(pos, STRUCTURE_RAMPART) === OK) siteCount++;
     }
 }
 
@@ -395,6 +435,21 @@ function needsReplanning(room, rcl, mem) {
     // Links: check if we're below limit
     const linkTarget = LINK_LIMITS[rcl] || 0;
     if (linkTarget > 0 && countType(room, STRUCTURE_LINK) < linkTarget) return true;
+
+    // Ramparts: if we have fewer ramparts (built+sites) than critical structures,
+    // at least one structure is unprotected — replan to fill the gap.
+    // This is O(1) compared to per-tile lookFor and fires on raid/decay loss.
+    if (rcl >= 2) {
+        const structTypes = [
+            STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
+            STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
+        ];
+        const criticalCount = room.find(FIND_STRUCTURES, {
+            filter: s => structTypes.includes(s.structureType)
+        }).length + (room.controller ? 1 : 0);
+        const rampartCount = countType(room, STRUCTURE_RAMPART);
+        if (rampartCount < criticalCount) return true;
+    }
 
     return false;
 }
@@ -441,6 +496,7 @@ const planner = {
         if (rcl >= 5) placeLinks(room);
 
         if (rcl >= 2) placeRoads(room, hub);
+        if (rcl >= 2) placeRamparts(room);
 
         // Only update lastRCL once all structures are placed at the target count.
         // If we are still short (site cap hit, terrain blocked, etc.) we will retry
