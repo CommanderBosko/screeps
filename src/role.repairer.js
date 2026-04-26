@@ -33,6 +33,21 @@ const roleRepairer = {
             return;
         }
 
+        // Emergency: repair ramparts critically close to 0 HP before normal maintenance.
+        // 1 HP/tick decay means a 500-HP rampart survives only ~500 ticks without repair.
+        const RAMPART_EMERGENCY = 500;
+        const dyingRamparts = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_RAMPART && s.hits < RAMPART_EMERGENCY);
+        if (dyingRamparts.length > 0) {
+            dyingRamparts.sort((a, b) => a.hits - b.hits);
+            const target = dyingRamparts[0];
+            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' } });
+            }
+            creep.say('🚨');
+            return;
+        }
+
         // Repair damaged non-wall structures (roads, containers, spawn, etc.)
         const damaged = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s =>

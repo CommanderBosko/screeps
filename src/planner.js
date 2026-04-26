@@ -378,31 +378,52 @@ function placeRoads(room, hub) {
     }
 }
 
-// Place ramparts on every tile that hosts a critical structure or the room controller.
-// Ramparts provide HP protection — attackers must burn through the rampart before
-// reaching the structure underneath. Runs at RCL 2+ (earliest ramparts unlock).
-// Skips tiles that already have a built rampart or a rampart construction site.
+// Place ramparts on critical structures, scaled by RCL to match repair capacity.
+//
+// Decay math: ramparts decay at 1 HP/tick on MMO. A base repairer (1 WORK part)
+// does 100 HP/action but wastes ticks travelling. Effective throughput with travel
+// is roughly 20-40 HP/tick — barely enough for 1 rampart, let alone many.
+//
+// RCL 2-3: no tower exists (TOWER_LIMITS[2]=0, TOWER_LIMITS[3]=1 but it may not be
+// built yet). Only protect the spawn — 1 rampart is manageable.
+// RCL 4: first tower is guaranteed. Add tower(s) to the protected set.
+// RCL 5+: full coverage — all critical structures and controller.
+//
+// The needsReplanning check is kept in sync: it only compares against the same
+// reduced set so we don't trigger infinite replan-decay cycles at low RCL.
 function placeRamparts(room) {
     const rcl = room.controller ? room.controller.level : 0;
     if (rcl < 2) return;
 
-    // Collect positions to protect
+    // Collect positions to protect, scaled by RCL
     const positions = [];
 
-    // Critical built structures
-    const structTypes = [
-        STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
-        STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
-    ];
-    const structs = room.find(FIND_STRUCTURES, {
-        filter: s => structTypes.includes(s.structureType)
-    });
-    for (const s of structs) positions.push(s.pos);
+    if (rcl < 4) {
+        // RCL 2-3: only the spawn. One rampart the repairer can actually maintain.
+        const spawns = room.find(FIND_MY_SPAWNS);
+        for (const s of spawns) positions.push(s.pos);
+    } else if (rcl < 5) {
+        // RCL 4: spawn + towers. Tower now exists and can help repair.
+        const spawn = room.find(FIND_MY_SPAWNS)[0];
+        if (spawn) positions.push(spawn.pos);
+        const towers = room.find(FIND_MY_STRUCTURES, {
+            filter: s => s.structureType === STRUCTURE_TOWER
+        });
+        for (const t of towers) positions.push(t.pos);
+    } else {
+        // RCL 5+: full coverage — all critical structures and controller
+        const structTypes = [
+            STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
+            STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
+        ];
+        const structs = room.find(FIND_STRUCTURES, {
+            filter: s => structTypes.includes(s.structureType)
+        });
+        for (const s of structs) positions.push(s.pos);
+        if (room.controller) positions.push(room.controller.pos);
+    }
 
-    // Room controller tile
-    if (room.controller) positions.push(room.controller.pos);
-
-    // Cache site count once; increment locally as we place to avoid repeated find() calls
+    // Cache site count once; increment locally to avoid repeated find() calls
     let siteCount = totalSites(room);
     for (const pos of positions) {
         if (siteCount >= 90) return;
@@ -436,19 +457,30 @@ function needsReplanning(room, rcl, mem) {
     const linkTarget = LINK_LIMITS[rcl] || 0;
     if (linkTarget > 0 && countType(room, STRUCTURE_LINK) < linkTarget) return true;
 
-    // Ramparts: if we have fewer ramparts (built+sites) than critical structures,
-    // at least one structure is unprotected — replan to fill the gap.
-    // This is O(1) compared to per-tile lookFor and fires on raid/decay loss.
+    // Ramparts: compare against the RCL-scaled target set (mirrors placeRamparts logic).
+    // Using the same reduced set prevents infinite replan-decay cycles at low RCL where
+    // repair capacity can't keep up with many ramparts.
     if (rcl >= 2) {
-        const structTypes = [
-            STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
-            STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
-        ];
-        const criticalCount = room.find(FIND_STRUCTURES, {
-            filter: s => structTypes.includes(s.structureType)
-        }).length + (room.controller ? 1 : 0);
+        let rampartTarget = 0;
+        if (rcl < 4) {
+            // Only spawns
+            rampartTarget = room.find(FIND_MY_SPAWNS).length;
+        } else if (rcl < 5) {
+            // Spawns + towers
+            rampartTarget = room.find(FIND_MY_SPAWNS).length +
+                room.find(FIND_MY_STRUCTURES, { filter: s => s.structureType === STRUCTURE_TOWER }).length;
+        } else {
+            // All critical structures + controller
+            const structTypes = [
+                STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
+                STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
+            ];
+            rampartTarget = room.find(FIND_STRUCTURES, {
+                filter: s => structTypes.includes(s.structureType)
+            }).length + (room.controller ? 1 : 0);
+        }
         const rampartCount = countType(room, STRUCTURE_RAMPART);
-        if (rampartCount < criticalCount) return true;
+        if (rampartCount < rampartTarget) return true;
     }
 
     return false;
