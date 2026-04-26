@@ -496,11 +496,17 @@ function getBody(role, energy) {
     }
 }
 
+// Roles that require a source assignment for positioning / work targeting.
+// Haulers pull from receiver links/containers by position — no sourceId needed.
+const ROLES_NEEDING_SOURCE = new Set(['harvester', 'upgrader', 'builder', 'repairer']);
+
 function spawnStandard(spawn, role, homeRoom) {
     const name = role.charAt(0).toUpperCase() + role.slice(1) + Game.time;
     const memory = { role, homeRoom };
-    const sourceId = cache.pickSource(spawn.room);
-    if (sourceId) memory.sourceId = sourceId;
+    if (ROLES_NEEDING_SOURCE.has(role)) {
+        const sourceId = cache.pickSource(spawn.room);
+        if (sourceId) memory.sourceId = sourceId;
+    }
     // Use energyCapacityAvailable so bodies scale with room development,
     // but cap at energyAvailable (spawn will reject if we can't afford it).
     const room = spawn.room;

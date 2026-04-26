@@ -20,20 +20,21 @@ const roleMiner = {
                 return; // Don't harvest until in position
             }
 
-            // When full, dump to link (teleports to receiver near spawn) or overflow to container
+            // When full, dump to link (teleports to receiver near spawn) or overflow to container.
+            // After a successful transfer the store has free capacity, so fall through to harvest
+            // on the same tick rather than wasting it.
             if (creep.store.getFreeCapacity() === 0) {
                 const link = creep.pos.findInRange(FIND_MY_STRUCTURES, 1, {
                     filter: s => s.structureType === STRUCTURE_LINK &&
                                  s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
                 })[0];
-                if (link) {
-                    creep.transfer(link, RESOURCE_ENERGY);
-                } else {
-                    creep.transfer(container, RESOURCE_ENERGY);
-                }
-                // Don't harvest when full — the energy would be wasted
+                const result = link
+                    ? creep.transfer(link, RESOURCE_ENERGY)
+                    : creep.transfer(container, RESOURCE_ENERGY);
                 creep.say('📤');
-                return;
+                // If transfer failed (link full, container full) we truly can't act — stop
+                if (result !== OK) return;
+                // Transfer succeeded — store now has free capacity, fall through to harvest
             }
         } else {
             // No container yet — move adjacent to source
