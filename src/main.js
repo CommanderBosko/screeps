@@ -518,6 +518,15 @@ function getBody(role, energy) {
 // Haulers pull from receiver links/containers by position — no sourceId needed.
 const ROLES_NEEDING_SOURCE = new Set(['harvester', 'upgrader', 'builder', 'repairer']);
 
+// Minimum energy reserve kept back so the spawn can always afford a replacement
+// harvester/emergency creep after spending on an upgrader or builder body.
+const SPAWN_BUFFER = 300;
+
+// Roles that are income-critical and should always scale to full capacity.
+// Upgraders and builders are limited to (energyAvailable - SPAWN_BUFFER) so they
+// never drain the spawn to the point where a dead harvester can't be replaced.
+const INCOME_ROLES = new Set(['harvester', 'miner', 'hauler']);
+
 function spawnStandard(spawn, role, homeRoom) {
     const name = role.charAt(0).toUpperCase() + role.slice(1) + Game.time;
     const memory = { role, homeRoom };
@@ -525,10 +534,16 @@ function spawnStandard(spawn, role, homeRoom) {
         const sourceId = cache.pickSource(spawn.room);
         if (sourceId) memory.sourceId = sourceId;
     }
-    // Use energyCapacityAvailable so bodies scale with room development,
-    // but cap at energyAvailable (spawn will reject if we can't afford it).
     const room = spawn.room;
-    const energyBudget = Math.min(room.energyCapacityAvailable, room.energyAvailable);
+    // Income-critical roles (harvester/miner/hauler) scale to full capacity so they
+    // stay as productive as the room can afford.
+    // Upgraders/builders are capped at (energyAvailable - SPAWN_BUFFER) so we always
+    // keep 300 energy in reserve for an emergency respawn — preventing the death spiral
+    // where saving up for a big upgrader body leaves the spawn unable to replace dead harvesters.
+    const rawBudget = Math.min(room.energyCapacityAvailable, room.energyAvailable);
+    const energyBudget = INCOME_ROLES.has(role)
+        ? rawBudget
+        : Math.max(200, room.energyAvailable - SPAWN_BUFFER);
     spawn.spawnCreep(getBody(role, energyBudget), name, { memory });
 }
 
