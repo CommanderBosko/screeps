@@ -190,6 +190,27 @@ function placeSpawnNearController(room) {
     }
 }
 
+// Ticks before death at which we pre-spawn a miner replacement (spawn time + travel buffer)
+const MINER_RESPAWN_TTL = 75;
+// TTL below which idle spawns will opportunistically renew adjacent creeps
+const RENEW_AT_TTL = 400;
+
+// Renew adjacent creeps with low TTL when a spawn would otherwise be idle.
+// Haulers and harvesters already visit spawns during normal delivery, so this
+// costs nothing extra — they just stay a tick longer and gain back ~100 ticks
+// for ~67 energy (9-part body). Prioritise the most urgent creep.
+function renewCreeps() {
+    for (const spawnName in Game.spawns) {
+        const spawn = Game.spawns[spawnName];
+        if (spawn.spawning) continue;
+        const candidates = spawn.pos.findInRange(FIND_MY_CREEPS, 1)
+            .filter(c => c.ticksToLive && c.ticksToLive < RENEW_AT_TTL);
+        if (candidates.length === 0) continue;
+        candidates.sort((a, b) => a.ticksToLive - b.ticksToLive);
+        spawn.renewCreep(candidates[0]);
+    }
+}
+
 // Count creeps by role scoped to a specific home room
 function roomCreeps(role, roomName) {
     return _.filter(Game.creeps, c => c.memory.role === role && c.memory.homeRoom === roomName).length;
@@ -217,7 +238,7 @@ function spawnForRoom(spawn) {
         return;
     }
 
-    // Miners — one per source with adjacent container
+    // Miners — one per source with adjacent container; pre-spawn when current miner is nearly dead
     for (const source of cache.find(room, FIND_SOURCES)) {
         const hasContainer = source.pos.findInRange(FIND_STRUCTURES, 1, {
             filter: s => s.structureType === STRUCTURE_CONTAINER
@@ -225,8 +246,10 @@ function spawnForRoom(spawn) {
         if (!hasContainer) continue;
         const minersForSource = _.filter(Game.creeps, c =>
             c.memory.role === 'miner' && c.memory.sourceId === source.id
-        ).length;
-        if (minersForSource === 0 && room.energyAvailable >= 200) {
+        );
+        const dyingMiner = minersForSource.find(c => c.ticksToLive < MINER_RESPAWN_TTL);
+        const needsMiner = minersForSource.length === 0 || dyingMiner;
+        if (needsMiner && minersForSource.length < 2 && room.energyAvailable >= 200) {
             spawn.spawnCreep(getBody('miner', room.energyAvailable), 'Miner' + Game.time, {
                 memory: { role: 'miner', sourceId: source.id, homeRoom: rn }
             });
@@ -365,6 +388,7 @@ module.exports.loop = function () {
     bootstrapNewRooms();
     checkSafeMode();
     spawnCreeps();
+    renewCreeps();
     setRoles();
     runTowers();
 };
