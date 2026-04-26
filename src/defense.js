@@ -157,8 +157,9 @@ const defense = {
         const spawn = room.find(FIND_MY_SPAWNS)[0];
         if (!spawn) return;
 
+        const sources = room.find(FIND_SOURCES);
         const targets = [
-            ...room.find(FIND_SOURCES),
+            ...sources,
             room.controller
         ].filter(Boolean);
 
@@ -166,6 +167,8 @@ const defense = {
             const path = spawn.pos.findPathTo(target, { ignoreCreeps: true });
             for (let i = 0; i < path.length - 1; i++) {
                 const step = path[i];
+                // Never place a road on or adjacent (range 1) to any source tile
+                if (sources.some(s => s.pos.inRangeTo(step.x, step.y, 1))) continue;
                 const pos = new RoomPosition(step.x, step.y, room.name);
                 const hasRoad = pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType === STRUCTURE_ROAD);
                 const hasSite = pos.lookFor(LOOK_CONSTRUCTION_SITES).some(s => s.structureType === STRUCTURE_ROAD);
