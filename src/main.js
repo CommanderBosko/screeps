@@ -51,6 +51,25 @@ function setRoles() {
     }
 }
 
+function runLinks(room) {
+    if (!room.controller || !room.controller.my) return;
+    const allLinks = cache.find(room, FIND_MY_STRUCTURES)
+        .filter(s => s.structureType === STRUCTURE_LINK);
+    if (allLinks.length < 2) return;
+
+    const sources = cache.find(room, FIND_SOURCES);
+    const isSourceLink = l => sources.some(s => l.pos.inRangeTo(s, 2));
+
+    const srcLinks = allLinks.filter(l => isSourceLink(l) && l.cooldown === 0 && l.store[RESOURCE_ENERGY] > 0);
+    // Pick the receiver with the most free capacity (usually only one)
+    const receiver = allLinks
+        .filter(l => !isSourceLink(l))
+        .sort((a, b) => b.store.getFreeCapacity(RESOURCE_ENERGY) - a.store.getFreeCapacity(RESOURCE_ENERGY))[0];
+
+    if (!receiver || receiver.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return;
+    for (const link of srcLinks) link.transferEnergy(receiver);
+}
+
 function runTowers() {
     for (const roomName in Game.rooms) {
         const room = Game.rooms[roomName];
@@ -266,12 +285,16 @@ function spawnForRoom(spawn) {
         return;
     }
 
-    // Haulers — 1 per source with a container at RCL 4-5
-    if (rcl >= 4 && rcl <= 5) {
+    // Haulers — scale with sources/containers; collapse to 1 once links are operational
+    if (rcl >= 4) {
         const sourcesWithContainer = cache.find(room, FIND_SOURCES).filter(s =>
             s.pos.findInRange(FIND_STRUCTURES, 1, { filter: t => t.structureType === STRUCTURE_CONTAINER }).length > 0
         ).length;
-        if (roomCreeps('hauler', rn) < sourcesWithContainer && room.energyAvailable >= 150) {
+        const linksBuilt = cache.find(room, FIND_MY_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_LINK).length;
+        // With ≥2 links (receiver + ≥1 source), one hauler drains the receiver near spawn
+        const haulerMax = linksBuilt >= 2 ? 1 : sourcesWithContainer;
+        if (haulerMax > 0 && roomCreeps('hauler', rn) < haulerMax && room.energyAvailable >= 150) {
             spawnStandard(spawn, 'hauler', rn);
             return;
         }
@@ -389,6 +412,7 @@ module.exports.loop = function () {
     checkSafeMode();
     spawnCreeps();
     renewCreeps();
+    for (const roomName in Game.rooms) runLinks(Game.rooms[roomName]);
     setRoles();
     runTowers();
 };

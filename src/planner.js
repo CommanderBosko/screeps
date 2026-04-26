@@ -1,5 +1,6 @@
 const EXTENSION_LIMITS = [0, 0, 5, 10, 20, 30, 40, 50, 50];
 const TOWER_LIMITS    = [0, 0, 0, 1, 1, 2, 2, 3, 6];
+const LINK_LIMITS     = [0, 0, 0, 0, 0, 2, 3, 4, 6];
 
 // BFS from all wall/border tiles outward — each cell value = distance to nearest wall.
 function distanceTransform(room) {
@@ -126,6 +127,78 @@ function placeTowers(room, parity, needed) {
     }
 }
 
+function placeLinks(room) {
+    const rcl = room.controller.level;
+    const limit = LINK_LIMITS[rcl] || 0;
+    if (countType(room, STRUCTURE_LINK) >= limit) return;
+
+    const terrain = room.getTerrain();
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
+
+    // Receiver link: adjacent to storage (preferred) or spawn so haulers have a short trip
+    const anchor = room.storage || spawn;
+    const hasReceiver =
+        anchor.pos.findInRange(FIND_MY_STRUCTURES, 2, { filter: s => s.structureType === STRUCTURE_LINK }).length +
+        anchor.pos.findInRange(FIND_CONSTRUCTION_SITES, 2, { filter: s => s.structureType === STRUCTURE_LINK }).length > 0;
+
+    if (!hasReceiver && countType(room, STRUCTURE_LINK) < limit) {
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                if (dx === 0 && dy === 0) continue;
+                const x = anchor.pos.x + dx, y = anchor.pos.y + dy;
+                if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+                if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) { dx = dy = 2; }
+            }
+        }
+    }
+
+    // Source links: one per source, preferring tiles also adjacent to the container so
+    // the stationary miner can transfer directly (Chebyshev range 1)
+    for (const source of room.find(FIND_SOURCES)) {
+        if (countType(room, STRUCTURE_LINK) >= limit) break;
+
+        const hasLink =
+            source.pos.findInRange(FIND_MY_STRUCTURES, 2, { filter: s => s.structureType === STRUCTURE_LINK }).length +
+            source.pos.findInRange(FIND_CONSTRUCTION_SITES, 2, { filter: s => s.structureType === STRUCTURE_LINK }).length > 0;
+        if (hasLink) continue;
+
+        const container = source.pos.findInRange(FIND_STRUCTURES, 1, {
+            filter: s => s.structureType === STRUCTURE_CONTAINER
+        })[0];
+
+        let placed = false;
+        // First pass: tile adjacent to BOTH source and container
+        if (container) {
+            outer:
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const x = source.pos.x + dx, y = source.pos.y + dy;
+                    if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+                    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                    if (Math.abs(x - container.pos.x) > 1 || Math.abs(y - container.pos.y) > 1) continue;
+                    if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) { placed = true; break outer; }
+                }
+            }
+        }
+        // Fallback: any open tile adjacent to source
+        if (!placed) {
+            outer:
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const x = source.pos.x + dx, y = source.pos.y + dy;
+                    if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+                    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                    if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) { break outer; }
+                }
+            }
+        }
+    }
+}
+
 function placeContainers(room) {
     const terrain = room.getTerrain();
     for (const source of room.find(FIND_SOURCES)) {
@@ -200,6 +273,8 @@ const planner = {
         if (towerHave < towerTarget) placeTowers(room, parity, towerTarget - towerHave);
 
         placeContainers(room);
+
+        if (rcl >= 5) placeLinks(room);
 
         if (rcl >= 2) placeRoads(room, hub);
 

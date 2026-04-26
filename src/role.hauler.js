@@ -22,6 +22,21 @@ const roleHauler = {
 
         if (cache.pickupNearby(creep)) return;
 
+        // Receiver links sit near spawn — withdraw here first for the shortest possible trip
+        const sources = cache.find(creep.room, FIND_SOURCES);
+        const receiverLinks = cache.find(creep.room, FIND_MY_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_LINK &&
+                         s.store[RESOURCE_ENERGY] > 0 &&
+                         !sources.some(src => s.pos.inRangeTo(src, 2)));
+        if (receiverLinks.length > 0) {
+            const target = creep.pos.findClosestByPath(receiverLinks);
+            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' } });
+            }
+            creep.say('🔗');
+            return;
+        }
+
         const containers = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
         if (containers.length > 0) {

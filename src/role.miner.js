@@ -16,7 +16,17 @@ const roleMiner = {
                 return;
             }
             if (creep.store.getFreeCapacity() === 0) {
-                creep.transfer(container, RESOURCE_ENERGY);
+                // Prefer the source link (if within range 1) so energy is teleported to the
+                // receiver link near spawn — no hauler travel needed for that leg.
+                const link = creep.pos.findInRange(FIND_MY_STRUCTURES, 1, {
+                    filter: s => s.structureType === STRUCTURE_LINK &&
+                                 s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+                })[0];
+                if (link) {
+                    creep.transfer(link, RESOURCE_ENERGY);
+                } else {
+                    creep.transfer(container, RESOURCE_ENERGY);
+                }
             }
         }
 
