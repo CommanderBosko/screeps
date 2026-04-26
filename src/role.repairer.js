@@ -102,8 +102,14 @@ const roleRepairer = {
             return;
         }
 
+        // Non-source containers first (don't drain miner containers)
+        const sources = cache.find(creep.room, FIND_SOURCES);
         const containers = cache.find(creep.room, FIND_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
+            .filter(s =>
+                s.structureType === STRUCTURE_CONTAINER &&
+                s.store[RESOURCE_ENERGY] > 100 &&
+                !sources.some(src => s.pos.inRangeTo(src, 1))
+            );
         if (containers.length > 0) {
             const target = creep.pos.findClosestByRange(containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -112,6 +118,24 @@ const roleRepairer = {
             creep.say('📦');
             return;
         }
+
+        // Source containers as last resort before mining (only tap when overflowing)
+        const srcContainers = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s =>
+                s.structureType === STRUCTURE_CONTAINER &&
+                s.store[RESOURCE_ENERGY] > 500
+            );
+        if (srcContainers.length > 0) {
+            const target = creep.pos.findClosestByRange(srcContainers);
+            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+            }
+            creep.say('📦');
+            return;
+        }
+
+        // Don't compete with harvesters for source access when spawn is low
+        if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5) return;
 
         if (!creep.memory.sourceId) cache.assignSource(creep);
         const source = Game.getObjectById(creep.memory.sourceId);

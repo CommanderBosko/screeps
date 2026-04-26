@@ -4,7 +4,7 @@ const ATTACK_PARTS = new Set([ATTACK, RANGED_ATTACK]);
 const REPAIR_RESERVE = 400;
 
 function rampartTarget(room) {
-    return Math.min((room.controller ? room.controller.level : 1) * 10000, 80000);
+    return Math.min((room.controller ? room.controller.level : 1) * 10000, 300000);
 }
 
 function pickAttackTarget(tower, hostiles) {

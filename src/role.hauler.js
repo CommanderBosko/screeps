@@ -16,14 +16,14 @@ const roleHauler = {
             const target = roleHauler.getDeliveryTarget(creep);
             if (target) {
                 if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
                 }
                 creep.say('🚚');
             } else {
                 // Nothing to fill — park near spawn to be useful for renewal
                 const spawns = cache.find(creep.room, FIND_MY_SPAWNS);
                 if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 2)) {
-                    creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#aaaaaa' } });
+                    creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#aaaaaa' }, reusePath: 5 });
                 }
                 creep.say('💤');
             }
@@ -38,7 +38,7 @@ const roleHauler = {
         if (readyReceivers.length > 0) {
             const target = creep.pos.findClosestByRange(readyReceivers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' } });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 3 });
             }
             creep.say('🔗');
             return;
@@ -50,7 +50,7 @@ const roleHauler = {
         if (containers.length > 0) {
             const target = creep.pos.findClosestByPath(containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('📦');
             return;

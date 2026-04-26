@@ -70,7 +70,7 @@ const roleBuilder = {
         const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
         const towers = myStructs.filter(s =>
             s.structureType === STRUCTURE_TOWER &&
-            s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.3
+            s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.5
         );
         if (towers.length > 0) {
             const target = creep.pos.findClosestByRange(towers);
