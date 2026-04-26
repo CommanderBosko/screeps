@@ -106,7 +106,7 @@ const roleRepairer = {
         const storage = creep.room.storage;
         if (storage && storage.store[RESOURCE_ENERGY] > 1000) {
             if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('🏦');
             return;
@@ -123,7 +123,7 @@ const roleRepairer = {
         if (containers.length > 0) {
             const target = creep.pos.findClosestByRange(containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('📦');
             return;
@@ -138,7 +138,7 @@ const roleRepairer = {
         if (srcContainers.length > 0) {
             const target = creep.pos.findClosestByRange(srcContainers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('📦');
             return;
@@ -151,7 +151,7 @@ const roleRepairer = {
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) { creep.memory.sourceId = null; return; }
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
         }
         creep.say('⛏️');
     }

@@ -17,7 +17,7 @@ const roleUpgrader = {
             if (!ctrl) return;
             const result = creep.upgradeController(ctrl);
             if (result === ERR_NOT_IN_RANGE) {
-                creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 5 });
+                creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
             }
             creep.say('⚡');
         } else {
@@ -37,7 +37,7 @@ const roleUpgrader = {
             const ctrlLink = receiverLinks.find(l => l.pos.inRangeTo(ctrl, 3));
             if (ctrlLink && ctrlLink.store[RESOURCE_ENERGY] > 0) {
                 if (creep.withdraw(ctrlLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(ctrlLink, { visualizePathStyle: { stroke: '#aa00ff' }, reusePath: 5 });
+                    creep.moveTo(ctrlLink, { visualizePathStyle: { stroke: '#aa00ff' }, reusePath: 3 });
                 }
                 creep.say('🔗⚡');
                 return;
@@ -48,7 +48,7 @@ const roleUpgrader = {
         const storage = creep.room.storage;
         if (storage && storage.store[RESOURCE_ENERGY] > 5000) {
             if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('🏦');
             return;
@@ -61,7 +61,7 @@ const roleUpgrader = {
             if (nearby.length > 0) {
                 const target = creep.pos.findClosestByRange(nearby);
                 if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
                 }
                 creep.say('📦');
                 return;
@@ -79,7 +79,7 @@ const roleUpgrader = {
         if (containers.length > 0) {
             const target = creep.pos.findClosestByRange(containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('📦');
             return;
@@ -93,7 +93,7 @@ const roleUpgrader = {
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) return;
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
         }
         creep.say('⛏️');
     }

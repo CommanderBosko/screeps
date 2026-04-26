@@ -16,7 +16,7 @@ const roleHauler = {
             const target = roleHauler.getDeliveryTarget(creep);
             if (target) {
                 if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 2 });
                 }
                 creep.say('🚚');
             } else {
@@ -38,7 +38,7 @@ const roleHauler = {
         if (readyReceivers.length > 0) {
             const target = creep.pos.findClosestByRange(readyReceivers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 3 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 2 });
             }
             creep.say('🔗');
             return;
@@ -50,7 +50,7 @@ const roleHauler = {
         if (containers.length > 0) {
             const target = creep.pos.findClosestByPath(containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 2 });
             }
             creep.say('📦');
             return;
@@ -68,11 +68,11 @@ const roleHauler = {
         );
         if (spawns.length > 0) return creep.pos.findClosestByRange(spawns);
 
-        // Priority 2: extensions
+        // Priority 2: extensions — use findClosestByPath for accurate routing among many targets
         const extensions = myStructs.filter(s =>
             s.structureType === STRUCTURE_EXTENSION && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
         );
-        if (extensions.length > 0) return creep.pos.findClosestByRange(extensions);
+        if (extensions.length > 0) return creep.pos.findClosestByPath(extensions);
 
         // Priority 3: towers (defensive capability)
         const towers = myStructs.filter(s =>

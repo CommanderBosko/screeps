@@ -16,7 +16,7 @@ const roleHarvester = {
             const target = roleHarvester.getTransferTarget(creep);
             if (target) {
                 if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 2 });
                 }
                 creep.say('🏭');
             } else {
@@ -24,7 +24,7 @@ const roleHarvester = {
                 const ctrl = creep.room.controller;
                 if (ctrl) {
                     if (creep.upgradeController(ctrl) === ERR_NOT_IN_RANGE) {
-                        creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
+                        creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 2 });
                     }
                     creep.say('⬆️');
                 }
@@ -42,7 +42,7 @@ const roleHarvester = {
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) return;
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 2 });
         }
         creep.say('⛏️');
     },

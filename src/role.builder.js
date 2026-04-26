@@ -43,23 +43,31 @@ const roleBuilder = {
         if (sites.length > 0) {
             const rcl = creep.room.controller ? creep.room.controller.level : 0;
             const priority = constructionPriority(rcl);
-            // Sort by priority, then by progress ratio (more complete first to avoid waste)
-            let best = null;
+            // Find the highest-priority tier, then among that tier pick the one
+            // with the most progress (avoid waste) — break ties by path distance.
             let bestPriority = Infinity;
-            let bestProgress = -1;
             for (const site of sites) {
                 const p = priority.indexOf(site.structureType);
                 const pIdx = p === -1 ? priority.length : p;
-                const progress = site.progress / site.progressTotal;
-                if (pIdx < bestPriority || (pIdx === bestPriority && progress > bestProgress)) {
-                    bestPriority = pIdx;
-                    bestProgress = progress;
-                    best = site;
-                }
+                if (pIdx < bestPriority) bestPriority = pIdx;
             }
+            const topTier = sites.filter(s => {
+                const p = priority.indexOf(s.structureType);
+                return (p === -1 ? priority.length : p) === bestPriority;
+            });
+            // Among top tier: prefer most complete, then closest by path
+            topTier.sort((a, b) => {
+                const progDiff = (b.progress / b.progressTotal) - (a.progress / a.progressTotal);
+                if (Math.abs(progDiff) > 0.1) return progDiff; // >10% difference: pick more complete
+                return 0; // let findClosestByPath decide among similar-progress sites
+            });
+            // Among near-equal progress, pick the path-closest in the top tier
+            const best = topTier.length === 1
+                ? topTier[0]
+                : creep.pos.findClosestByPath(topTier) || topTier[0];
             if (best) {
                 if (creep.build(best) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(best, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 5 });
+                    creep.moveTo(best, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
                 }
                 creep.say('🚧');
             }
@@ -97,7 +105,7 @@ const roleBuilder = {
         const ctrl = creep.room.controller;
         if (ctrl) {
             if (creep.upgradeController(ctrl) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('⬆');
         }
@@ -110,7 +118,7 @@ const roleBuilder = {
         const storage = creep.room.storage;
         if (storage && storage.store[RESOURCE_ENERGY] > 2000) {
             if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('🏦');
             return;
@@ -127,7 +135,7 @@ const roleBuilder = {
         if (containers.length > 0) {
             const target = creep.pos.findClosestByRange(containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('📦');
             return;
@@ -142,7 +150,7 @@ const roleBuilder = {
         if (srcContainers.length > 0) {
             const target = creep.pos.findClosestByRange(srcContainers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
             creep.say('📦');
             return;
@@ -156,7 +164,7 @@ const roleBuilder = {
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) { creep.memory.sourceId = null; return; }
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
         }
         creep.say('⛏️');
     }

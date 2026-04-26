@@ -553,15 +553,18 @@ module.exports.loop = function () {
     wipeMemory();
     migrateCreepMemory();
 
-    // Heavy periodic tasks — stagger them so they never land on the same tick
-    if (Game.time % 100 === 0) {
+    // Periodic tasks — staggered so they never land on the same tick.
+    // With ~3 CPU/tick budget usage we have plenty of headroom to run these more often.
+    // defense.run: chokepoint walls — cheap early-exit after walls placed; run every 30 ticks
+    if (Game.time % 30 === 0) {
         for (const roomName in Game.rooms) defense.run(Game.rooms[roomName]);
     }
-    if (Game.time % 50 === 0) {
+    // rebalanceSources: O(creeps) scan — run every 20 ticks so drift is corrected faster
+    if (Game.time % 20 === 7) {
         for (const roomName in Game.rooms) rebalanceSources(Game.rooms[roomName]);
     }
-    // Planner only needs to run when RCL changes — check every 10 ticks to keep CPU low
-    if (Game.time % 10 === 3) {
+    // Planner: needsReplanning() fast-exits when nothing changed — run every 5 ticks
+    if (Game.time % 5 === 3) {
         for (const roomName in Game.rooms) planner.run(Game.rooms[roomName]);
     }
 
