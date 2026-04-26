@@ -3,10 +3,6 @@ const cache = require('cache');
 const ATTACK_PARTS = new Set([ATTACK, RANGED_ATTACK]);
 const REPAIR_RESERVE = 400;
 
-function rampartTarget(room) {
-    return Math.min((room.controller ? room.controller.level : 1) * 10000, 300000);
-}
-
 function pickAttackTarget(tower, hostiles) {
     // Prefer creeps that have attack parts — they're the actual threat
     const attackers = hostiles.filter(h => h.body.some(p => ATTACK_PARTS.has(p.type)));
@@ -45,7 +41,7 @@ const towerLogic = {
         }
 
         // Repair ramparts/walls below HP floor
-        const hpTarget = rampartTarget(tower.room);
+        const hpTarget = cache.getWallTarget(tower.room);
         const weakBarrier = cache.find(tower.room, FIND_STRUCTURES)
             .filter(s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) && s.hits < hpTarget);
         if (weakBarrier.length > 0) {

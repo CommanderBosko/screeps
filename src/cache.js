@@ -98,4 +98,14 @@ const cache = {
     }
 };
 
+// Returns the HP cap for walls/ramparts at the given RCL.
+// Repairers and towers use this to avoid dumping energy into maxing defenses.
+cache.getWallTarget = function (room) {
+    const rcl = room.controller ? room.controller.level : 1;
+    if (rcl >= 8) return 300000;
+    if (rcl >= 6) return 150000;
+    if (rcl >= 4) return 50000;
+    return 10000;
+};
+
 module.exports = cache;

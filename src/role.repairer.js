@@ -1,10 +1,5 @@
 const cache = require('cache');
 
-// HP target for walls/ramparts scales with RCL, capped at 300k for performance
-function rampartTarget(room) {
-    return Math.min((room.controller ? room.controller.level : 1) * 10000, 300000);
-}
-
 const roleRepairer = {
     run: function (creep) {
         if (creep.memory.repairing && creep.store[RESOURCE_ENERGY] === 0) {
@@ -57,7 +52,7 @@ const roleRepairer = {
         }
 
         // Repair walls/ramparts below HP floor
-        const hpTarget = rampartTarget(creep.room);
+        const hpTarget = cache.getWallTarget(creep.room);
         const weakBarrier = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s =>
                 (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
