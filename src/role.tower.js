@@ -29,15 +29,15 @@ const towerLogic = {
 
         if (tower.store[RESOURCE_ENERGY] <= REPAIR_RESERVE) return;
 
-        // Emergency: repair ramparts critically close to 0 HP before anything else.
-        // Ramparts decay 1 HP/tick — if one hits 0 it is destroyed and all protection
-        // under it is lost. Prioritise these over road/container maintenance.
-        const RAMPART_EMERGENCY = 500;
-        const dyingRamparts = cache.find(tower.room, FIND_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_RAMPART && s.hits < RAMPART_EMERGENCY);
-        if (dyingRamparts.length > 0) {
-            dyingRamparts.sort((a, b) => a.hits - b.hits);
-            tower.repair(dyingRamparts[0]);
+        // Emergency: repair barriers (ramparts or walls) critically close to 0 HP before anything else.
+        // Ramparts decay 1 HP/tick — if one hits 0 it is destroyed. Walls start at 1 HP so they
+        // also need emergency repair before the regular barrier pass can bring them up to hpTarget.
+        const BARRIER_EMERGENCY = 500;
+        const dyingBarriers = cache.find(tower.room, FIND_STRUCTURES)
+            .filter(s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) && s.hits < BARRIER_EMERGENCY);
+        if (dyingBarriers.length > 0) {
+            dyingBarriers.sort((a, b) => a.hits - b.hits);
+            tower.repair(dyingBarriers[0]);
             return;
         }
 
