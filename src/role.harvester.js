@@ -1,5 +1,8 @@
 const cache = require('cache');
 
+// Harvester: active at RCL 1-3, mines and delivers to spawn/extensions/towers/storage.
+// Replaced by miner+hauler at RCL 4+.
+
 const roleHarvester = {
     run: function (creep) {
         if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
@@ -12,31 +15,28 @@ const roleHarvester = {
         if (creep.memory.delivering) {
             const target = roleHarvester.getTransferTarget(creep);
             if (target) {
-                roleHarvester.transferEnergy(creep);
-            } else {
-                if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(creep.room.controller, { visualizePathStyle: { stroke: '#ffffff' } });
+                if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
                 }
-                creep.say('⬆️');
+                creep.say('🏭');
+            } else {
+                // Fallback: upgrade controller
+                const ctrl = creep.room.controller;
+                if (ctrl) {
+                    if (creep.upgradeController(ctrl) === ERR_NOT_IN_RANGE) {
+                        creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
+                    }
+                    creep.say('⬆️');
+                }
             }
             return;
         }
+
         roleHarvester.getEnergy(creep);
     },
 
     getEnergy: function (creep) {
         if (cache.pickupNearby(creep)) return;
-
-        const containers = cache.find(creep.room, FIND_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
-        if (containers.length > 0) {
-            const target = creep.pos.findClosestByRange(containers);
-            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
-            }
-            creep.say('📦');
-            return;
-        }
 
         if (!creep.memory.sourceId) cache.assignSource(creep);
         let source = Game.getObjectById(creep.memory.sourceId);
@@ -46,31 +46,33 @@ const roleHarvester = {
         }
         if (!source) return;
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
         }
         creep.say('⛏️');
     },
 
-    transferEnergy: function (creep) {
-        const target = roleHarvester.getTransferTarget(creep);
-        if (!target) return;
-        if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
-        }
-        creep.say('🏭');
-    },
-
     getTransferTarget: function (creep) {
         const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
-        const spawns = myStructs.filter(s => s.structureType === STRUCTURE_SPAWN && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
-        if (spawns.length > 0) return spawns[0];
-        const extensions = myStructs.filter(s => s.structureType === STRUCTURE_EXTENSION && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
-        if (extensions.length > 0) return extensions[0];
-        const towers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
-        if (towers.length > 0) return towers[0];
-        const containers = cache.find(creep.room, FIND_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
-        if (containers.length > 0) return containers[0];
+
+        const spawns = myStructs.filter(s =>
+            s.structureType === STRUCTURE_SPAWN && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+        if (spawns.length > 0) return creep.pos.findClosestByRange(spawns);
+
+        const extensions = myStructs.filter(s =>
+            s.structureType === STRUCTURE_EXTENSION && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+        if (extensions.length > 0) return creep.pos.findClosestByRange(extensions);
+
+        const towers = myStructs.filter(s =>
+            s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        );
+        if (towers.length > 0) return creep.pos.findClosestByRange(towers);
+
+        // Storage if it exists (RCL 4 edge case where harvester still alive)
+        const storage = creep.room.storage;
+        if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) return storage;
+
         return null;
     }
 };

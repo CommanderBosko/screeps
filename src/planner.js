@@ -197,6 +197,35 @@ function placeLinks(room) {
             }
         }
     }
+
+    // Upgrader link: at RCL 6+ we have 3 links — place one near the controller
+    // so upgraders can withdraw from it instead of travelling to storage.
+    // This dramatically increases upgrade throughput.
+    if (rcl >= 6 && countType(room, STRUCTURE_LINK) < limit) {
+        const ctrl = room.controller;
+        if (ctrl) {
+            const hasCtrlLink =
+                ctrl.pos.findInRange(FIND_MY_STRUCTURES, 3, { filter: s => s.structureType === STRUCTURE_LINK }).length +
+                ctrl.pos.findInRange(FIND_CONSTRUCTION_SITES, 3, { filter: s => s.structureType === STRUCTURE_LINK }).length > 0;
+            if (!hasCtrlLink) {
+                outer:
+                for (let r = 1; r <= 3; r++) {
+                    for (let dx = -r; dx <= r; dx++) {
+                        for (let dy = -r; dy <= r; dy++) {
+                            if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+                            const x = ctrl.pos.x + dx, y = ctrl.pos.y + dy;
+                            if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+                            if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                            if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) {
+                                console.log('🔗 Upgrader link placed near controller in ' + room.name);
+                                break outer;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 function placeContainers(room) {
@@ -222,18 +251,57 @@ function placeContainers(room) {
     }
 }
 
+// Place a container adjacent to the controller so upgraders have a local energy buffer.
+// Upgraders withdraw from this container; haulers (or harvesters) fill it.
+function placeControllerContainer(room) {
+    const ctrl = room.controller;
+    if (!ctrl) return;
+
+    const nearby = ctrl.pos.findInRange(FIND_STRUCTURES, 3, {
+        filter: s => s.structureType === STRUCTURE_CONTAINER
+    }).length + ctrl.pos.findInRange(FIND_CONSTRUCTION_SITES, 3, {
+        filter: s => s.structureType === STRUCTURE_CONTAINER
+    }).length;
+    if (nearby > 0) return;
+
+    const terrain = room.getTerrain();
+    for (let r = 1; r <= 3; r++) {
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dy = -r; dy <= r; dy++) {
+                if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+                const x = ctrl.pos.x + dx, y = ctrl.pos.y + dy;
+                if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+                if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                if (room.createConstructionSite(x, y, STRUCTURE_CONTAINER) === OK) {
+                    console.log('📦 Controller container placed in ' + room.name);
+                    return;
+                }
+            }
+        }
+    }
+}
+
 function placeRoads(room, hub) {
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     if (!spawn) return;
 
+    const ctrl = room.controller;
     const targets = [
         ...room.find(FIND_SOURCES).map(s => s.pos),
-        room.controller ? room.controller.pos : null,
+        ctrl ? ctrl.pos : null,
         new RoomPosition(hub.x, hub.y, room.name),
     ].filter(Boolean);
 
     for (const target of targets) {
         const path = spawn.pos.findPathTo(target, { ignoreCreeps: true, swampCost: 1 });
+        for (const step of path) {
+            room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
+        }
+    }
+
+    // Road from spawn to storage if it exists
+    if (room.storage) {
+        const path = spawn.pos.findPathTo(room.storage, { ignoreCreeps: true, swampCost: 1 });
         for (const step of path) {
             room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
         }
@@ -273,6 +341,7 @@ const planner = {
         if (towerHave < towerTarget) placeTowers(room, parity, towerTarget - towerHave);
 
         placeContainers(room);
+        if (rcl >= 3) placeControllerContainer(room);
 
         if (rcl >= 5) placeLinks(room);
 

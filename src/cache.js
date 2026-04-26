@@ -18,6 +18,42 @@ const cache = {
         return this._data[key];
     },
 
+    // Cached filtered find — avoids re-filtering the same constant multiple times per tick.
+    // filterKey must be a stable string unique to the filter predicate.
+    findFiltered: function (room, constant, filterKey, filterFn) {
+        this._refresh();
+        const key = room.name + ':' + constant + ':' + filterKey;
+        if (!(key in this._data)) {
+            this._data[key] = room.find(constant, { filter: filterFn });
+        }
+        return this._data[key];
+    },
+
+    // Cached lookup for which links are source links vs receiver links in a room.
+    // Returns { srcLinks: [], receiverLinks: [] }. Recomputed once per RCL change.
+    getLinkRoles: function (room) {
+        this._refresh();
+        const key = room.name + ':linkRoles';
+        if (key in this._data) return this._data[key];
+
+        const allLinks = this.find(room, FIND_MY_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_LINK);
+        const sources = this.find(room, FIND_SOURCES);
+
+        const srcLinks = [];
+        const receiverLinks = [];
+
+        for (const link of allLinks) {
+            const nearSource = sources.some(s => link.pos.inRangeTo(s, 2));
+            if (nearSource) srcLinks.push(link);
+            else receiverLinks.push(link);
+        }
+
+        const result = { srcLinks, receiverLinks };
+        this._data[key] = result;
+        return result;
+    },
+
     // Return the least-contested source ID for a given room across all roles.
     pickSource: function (room) {
         const sources = this.find(room, FIND_SOURCES);
@@ -26,6 +62,7 @@ const cache = {
         for (const s of sources) counts[s.id] = 0;
         for (const name in Game.creeps) {
             const c = Game.creeps[name];
+            if (c.memory.homeRoom !== room.name) continue;
             if (c.memory.sourceId && counts[c.memory.sourceId] !== undefined) {
                 counts[c.memory.sourceId]++;
             }
@@ -42,7 +79,7 @@ const cache = {
     // Pick up dropped energy or withdraw from tombstones/ruins. Returns true if acted.
     pickupNearby: function (creep) {
         const dropped = this.find(creep.room, FIND_DROPPED_RESOURCES)
-            .filter(r => r.resourceType === RESOURCE_ENERGY);
+            .filter(r => r.resourceType === RESOURCE_ENERGY && r.amount >= 50);
         const tombstones = this.find(creep.room, FIND_TOMBSTONES)
             .filter(t => t.store[RESOURCE_ENERGY] > 0);
         const ruins = this.find(creep.room, FIND_RUINS)

@@ -1,91 +1,125 @@
 const cache = require('cache');
 
+// HP target for walls/ramparts scales with RCL, capped at 300k for performance
 function rampartTarget(room) {
-    return Math.min((room.controller ? room.controller.level : 1) * 10000, 80000);
+    return Math.min((room.controller ? room.controller.level : 1) * 10000, 300000);
 }
 
 const roleRepairer = {
     run: function (creep) {
         if (creep.memory.repairing && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.repairing = false;
-            creep.say('🔄 Harvest');
         }
         if (!creep.memory.repairing && creep.store.getFreeCapacity() === 0) {
             creep.memory.repairing = true;
-            creep.say('🔧 Repair');
         }
 
         if (creep.memory.repairing) {
-            const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
-            const towers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
-
-            if (towers.length > 0) {
-                towers.sort((a, b) => a.store.getFreeCapacity(RESOURCE_ENERGY) - b.store.getFreeCapacity(RESOURCE_ENERGY));
-                if (creep.transfer(towers[0], RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(towers[0], { visualizePathStyle: { stroke: '#ffffff' } });
-                }
-                creep.say('🚀 Delivering');
-                return;
-            }
-
-            const damaged = cache.find(creep.room, FIND_STRUCTURES)
-                .filter(s => s.hits < s.hitsMax &&
-                    s.structureType !== STRUCTURE_WALL &&
-                    s.structureType !== STRUCTURE_RAMPART);
-            if (damaged.length > 0) {
-                damaged.sort((a, b) => a.hits - b.hits);
-                if (creep.repair(damaged[0]) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(damaged[0], { visualizePathStyle: { stroke: '#ffffff' } });
-                }
-                creep.say('🔧 Repairing');
-                return;
-            }
-
-            const hpTarget = rampartTarget(creep.room);
-            const weakBarrier = cache.find(creep.room, FIND_STRUCTURES)
-                .filter(s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) && s.hits < hpTarget);
-            if (weakBarrier.length > 0) {
-                weakBarrier.sort((a, b) => a.hits - b.hits);
-                if (creep.repair(weakBarrier[0]) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(weakBarrier[0], { visualizePathStyle: { stroke: '#aaaaaa' } });
-                }
-                creep.say('🧱 Barrier');
-                return;
-            }
-
-            if (creep.store.getFreeCapacity() > 0) {
-                creep.memory.repairing = false;
-                creep.memory.sourceId = null;
-                roleRepairer.getEnergy(creep);
-                return;
-            }
-            const roomSpawns = cache.find(creep.room, FIND_MY_SPAWNS);
-            if (roomSpawns.length > 0) {
-                creep.moveTo(roomSpawns[0].pos, { visualizePathStyle: { stroke: '#ffaa00' } });
-            }
-            creep.say('💤 Idle');
+            roleRepairer.doRepair(creep);
         } else {
             roleRepairer.getEnergy(creep);
         }
     },
 
+    doRepair: function (creep) {
+        const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
+
+        // Fill towers first (top priority for towers below 50%)
+        const towers = myStructs.filter(s =>
+            s.structureType === STRUCTURE_TOWER &&
+            s.store[RESOURCE_ENERGY] < s.store.getCapacity(RESOURCE_ENERGY) * 0.5
+        );
+        if (towers.length > 0) {
+            const target = creep.pos.findClosestByRange(towers);
+            if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+            }
+            creep.say('🗼');
+            return;
+        }
+
+        // Repair damaged non-wall structures (roads, containers, spawn, etc.)
+        const damaged = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s =>
+                s.hits < s.hitsMax &&
+                s.structureType !== STRUCTURE_WALL &&
+                s.structureType !== STRUCTURE_RAMPART
+            );
+        if (damaged.length > 0) {
+            // Sort by hit % so most degraded gets fixed first
+            damaged.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
+            const target = damaged[0];
+            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+            }
+            creep.say('🔧');
+            return;
+        }
+
+        // Repair walls/ramparts below HP floor
+        const hpTarget = rampartTarget(creep.room);
+        const weakBarrier = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s =>
+                (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
+                s.hits < hpTarget
+            );
+        if (weakBarrier.length > 0) {
+            weakBarrier.sort((a, b) => a.hits - b.hits);
+            if (creep.repair(weakBarrier[0]) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(weakBarrier[0], { visualizePathStyle: { stroke: '#aaaaaa' } });
+            }
+            creep.say('🧱');
+            return;
+        }
+
+        // Nothing to repair — dump energy into storage or park near spawn
+        const storage = creep.room.storage;
+        if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+            if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+            }
+            creep.say('🏦');
+            return;
+        }
+
+        const spawns = cache.find(creep.room, FIND_MY_SPAWNS);
+        if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 3)) {
+            creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ffaa00' } });
+        }
+        creep.say('💤');
+    },
+
     getEnergy: function (creep) {
         if (cache.pickupNearby(creep)) return;
+
+        // Prefer storage (don't compete for containers)
+        const storage = creep.room.storage;
+        if (storage && storage.store[RESOURCE_ENERGY] > 1000) {
+            if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+            }
+            creep.say('🏦');
+            return;
+        }
+
         const containers = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
         if (containers.length > 0) {
             const target = creep.pos.findClosestByRange(containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' } });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
             }
+            creep.say('📦');
             return;
         }
+
         if (!creep.memory.sourceId) cache.assignSource(creep);
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) { creep.memory.sourceId = null; return; }
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
         }
+        creep.say('⛏️');
     }
 };
 

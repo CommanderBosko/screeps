@@ -31,43 +31,47 @@ function migrateCreepMemory() {
     }
 }
 
+const ROLE_MAP = {
+    'harvester': roleHarvester,
+    'upgrader': roleUpgrader,
+    'builder': roleBuilder,
+    'repairer': roleRepairer,
+    'miner': roleMiner,
+    'claimer': roleClaimer,
+    'defender': roleDefender,
+    'scout': roleScout,
+    'pioneer': rolePioneer,
+    'attacker': roleAttacker,
+    'hauler': roleHauler,
+};
+
 function setRoles() {
     for (const name in Game.creeps) {
         const creep = Game.creeps[name];
-        const roleObj = {
-            'harvester': roleHarvester,
-            'upgrader': roleUpgrader,
-            'builder': roleBuilder,
-            'repairer': roleRepairer,
-            'miner': roleMiner,
-            'claimer': roleClaimer,
-            'defender': roleDefender,
-            'scout': roleScout,
-            'pioneer': rolePioneer,
-            'attacker': roleAttacker,
-            'hauler': roleHauler,
-        }[creep.memory.role];
+        const roleObj = ROLE_MAP[creep.memory.role];
         if (roleObj) roleObj.run(creep);
     }
 }
 
 function runLinks(room) {
     if (!room.controller || !room.controller.my) return;
-    const allLinks = cache.find(room, FIND_MY_STRUCTURES)
-        .filter(s => s.structureType === STRUCTURE_LINK);
-    if (allLinks.length < 2) return;
+    const { srcLinks, receiverLinks } = cache.getLinkRoles(room);
+    if (srcLinks.length === 0 || receiverLinks.length === 0) return;
 
-    const sources = cache.find(room, FIND_SOURCES);
-    const isSourceLink = l => sources.some(s => l.pos.inRangeTo(s, 2));
+    // Pick the receiver with the most free capacity
+    let receiver = null;
+    let bestFree = 0;
+    for (const l of receiverLinks) {
+        const free = l.store.getFreeCapacity(RESOURCE_ENERGY);
+        if (free > bestFree) { bestFree = free; receiver = l; }
+    }
+    if (!receiver || bestFree === 0) return;
 
-    const srcLinks = allLinks.filter(l => isSourceLink(l) && l.cooldown === 0 && l.store[RESOURCE_ENERGY] > 0);
-    // Pick the receiver with the most free capacity (usually only one)
-    const receiver = allLinks
-        .filter(l => !isSourceLink(l))
-        .sort((a, b) => b.store.getFreeCapacity(RESOURCE_ENERGY) - a.store.getFreeCapacity(RESOURCE_ENERGY))[0];
-
-    if (!receiver || receiver.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return;
-    for (const link of srcLinks) link.transferEnergy(receiver);
+    for (const link of srcLinks) {
+        if (link.cooldown === 0 && link.store[RESOURCE_ENERGY] > 0) {
+            link.transferEnergy(receiver);
+        }
+    }
 }
 
 function runTowers() {
@@ -289,8 +293,12 @@ function spawnForRoom(spawn) {
         return;
     }
 
+    const rcl = room.controller ? room.controller.level : 0;
+    const roomSources = cache.find(room, FIND_SOURCES);
+    const roomMyStructs = cache.find(room, FIND_MY_STRUCTURES);
+
     // Miners — one per source with adjacent container; pre-spawn when current miner is nearly dead
-    for (const source of cache.find(room, FIND_SOURCES)) {
+    for (const source of roomSources) {
         const hasContainer = source.pos.findInRange(FIND_STRUCTURES, 1, {
             filter: s => s.structureType === STRUCTURE_CONTAINER
         }).length > 0;
@@ -301,14 +309,14 @@ function spawnForRoom(spawn) {
         const dyingMiner = minersForSource.find(c => c.ticksToLive < MINER_RESPAWN_TTL);
         const needsMiner = minersForSource.length === 0 || dyingMiner;
         if (needsMiner && minersForSource.length < 2 && room.energyAvailable >= 200) {
-            spawn.spawnCreep(getBody('miner', room.energyAvailable), 'Miner' + Game.time, {
+            // Use energyCapacityAvailable so miner body scales with room, but cap at current energy
+            const minerEnergy = Math.min(room.energyCapacityAvailable, room.energyAvailable);
+            spawn.spawnCreep(getBody('miner', minerEnergy), 'Miner' + Game.time, {
                 memory: { role: 'miner', sourceId: source.id, homeRoom: rn }
             });
             return;
         }
     }
-
-    const rcl = room.controller ? room.controller.level : 0;
 
     // Harvesters — 3 at RCL 1-3, replaced by miners+haulers at RCL 4+
     const harvesterMax = rcl <= 3 ? 3 : 0;
@@ -319,11 +327,10 @@ function spawnForRoom(spawn) {
 
     // Haulers — scale with sources/containers; collapse to 1 once links are operational
     if (rcl >= 4) {
-        const sourcesWithContainer = cache.find(room, FIND_SOURCES).filter(s =>
+        const sourcesWithContainer = roomSources.filter(s =>
             s.pos.findInRange(FIND_STRUCTURES, 1, { filter: t => t.structureType === STRUCTURE_CONTAINER }).length > 0
         ).length;
-        const linksBuilt = cache.find(room, FIND_MY_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_LINK).length;
+        const linksBuilt = roomMyStructs.filter(s => s.structureType === STRUCTURE_LINK).length;
         // With ≥2 links (receiver + ≥1 source), one hauler drains the receiver near spawn
         const haulerMax = linksBuilt >= 2 ? 1 : sourcesWithContainer;
         if (haulerMax > 0 && roomCreeps('hauler', rn) < haulerMax && room.energyAvailable >= 150) {
@@ -366,8 +373,10 @@ function spawnForRoom(spawn) {
     }
 
     // Standard roles — 2 each per room
-    const hasTower = cache.find(room, FIND_MY_STRUCTURES).some(s => s.structureType === STRUCTURE_TOWER);
-    const upgraderMax = rcl >= 4 && rcl <= 5 ? 4 : 3;
+    const hasTower = roomMyStructs.some(s => s.structureType === STRUCTURE_TOWER);
+    // Upgraders scale with RCL: more at mid RCL where upgrading matters most.
+    // At RCL 8 only 1 upgrader needed (GCL gains tiny, just keep controller alive).
+    const upgraderMax = rcl >= 8 ? 1 : (rcl >= 6 ? 2 : (rcl >= 4 ? 4 : 3));
     for (const [role, max] of [['builder', 2], ['upgrader', upgraderMax], ['repairer', hasTower ? 0 : 1]]) {
         if (roomCreeps(role, rn) < max && room.energyAvailable >= 200) {
             spawnStandard(spawn, role, rn);
@@ -397,26 +406,36 @@ function spawnForRoom(spawn) {
 function getBody(role, energy) {
     switch (role) {
         case 'miner':
-            return energy >= 550
-                ? [WORK, WORK, WORK, WORK, WORK, MOVE]
-                : [WORK, CARRY, MOVE];
+            // 5-WORK miner saturates a source (10 energy/tick). 3-WORK is a decent interim.
+            if (energy >= 550) return [WORK, WORK, WORK, WORK, WORK, MOVE];
+            if (energy >= 350) return [WORK, WORK, WORK, MOVE];
+            return [WORK, CARRY, MOVE];
+
         case 'hauler':
-            return energy >= 450
-                ? [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE]
-                : [CARRY, CARRY, MOVE];
+            // Scale CARRY with energy; keep roughly 1 MOVE per 2 CARRY on roads
+            if (energy >= 600) return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE];
+            if (energy >= 450) return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
+            if (energy >= 300) return [CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
+            return [CARRY, CARRY, MOVE];
+
         case 'harvester':
-            return energy >= 400
-                ? [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
-                : [WORK, CARRY, MOVE];
+            if (energy >= 550) return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
+            if (energy >= 400) return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
+            return [WORK, CARRY, MOVE];
+
         case 'upgrader':
-            return energy >= 450
-                ? [WORK, WORK, WORK, CARRY, MOVE, MOVE]
-                : [WORK, CARRY, MOVE];
+            // More WORK = faster RCL progression. Cap MOVE at what's needed.
+            if (energy >= 800) return [WORK, WORK, WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
+            if (energy >= 600) return [WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE];
+            if (energy >= 450) return [WORK, WORK, WORK, CARRY, MOVE, MOVE];
+            return [WORK, CARRY, MOVE];
+
         case 'builder':
         case 'repairer':
-            return energy >= 400
-                ? [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
-                : [WORK, CARRY, MOVE];
+            if (energy >= 550) return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
+            if (energy >= 400) return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
+            return [WORK, CARRY, MOVE];
+
         default:
             return [WORK, CARRY, MOVE];
     }
@@ -427,19 +446,31 @@ function spawnStandard(spawn, role, homeRoom) {
     const memory = { role, homeRoom };
     const sourceId = cache.pickSource(spawn.room);
     if (sourceId) memory.sourceId = sourceId;
-    spawn.spawnCreep(getBody(role, spawn.room.energyAvailable), name, { memory });
+    // Use energyCapacityAvailable so bodies scale with room development,
+    // but cap at energyAvailable (spawn will reject if we can't afford it).
+    const room = spawn.room;
+    const energyBudget = Math.min(room.energyCapacityAvailable, room.energyAvailable);
+    spawn.spawnCreep(getBody(role, energyBudget), name, { memory });
 }
 
 module.exports.loop = function () {
+    const tickStart = Game.cpu.getUsed();
+
     wipeMemory();
     migrateCreepMemory();
+
+    // Heavy periodic tasks — stagger them so they never land on the same tick
     if (Game.time % 100 === 0) {
         for (const roomName in Game.rooms) defense.run(Game.rooms[roomName]);
     }
     if (Game.time % 50 === 0) {
         for (const roomName in Game.rooms) rebalanceSources(Game.rooms[roomName]);
     }
-    for (const roomName in Game.rooms) planner.run(Game.rooms[roomName]);
+    // Planner only needs to run when RCL changes — check every 10 ticks to keep CPU low
+    if (Game.time % 10 === 3) {
+        for (const roomName in Game.rooms) planner.run(Game.rooms[roomName]);
+    }
+
     selectAttackTarget();
     checkAttackComplete();
     selectClaimTarget();
@@ -450,4 +481,11 @@ module.exports.loop = function () {
     for (const roomName in Game.rooms) runLinks(Game.rooms[roomName]);
     setRoles();
     runTowers();
+
+    // Warn if we're using too much CPU
+    const used = Game.cpu.getUsed() - tickStart;
+    if (used > 18) {
+        console.log('⚠️ High CPU tick ' + Game.time + ': ' + used.toFixed(1) +
+            ' bucket=' + Game.cpu.bucket);
+    }
 };
