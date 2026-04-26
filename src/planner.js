@@ -358,18 +358,18 @@ function placeRoads(room, hub) {
         );
         if (result.incomplete) continue;
         for (const pos of result.path) {
-            // Never place a road on a spawn, controller, or source tile
+            if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
+            // Never place a road on the spawn, controller, or source tile itself
             if (pos.x === spawn.pos.x && pos.y === spawn.pos.y) continue;
             if (ctrl && pos.x === ctrl.pos.x && pos.y === ctrl.pos.y) continue;
-            if (sources.some(s => s.pos.inRangeTo(pos, 1))) continue;
-            if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
-            // Only place if nothing is already there (road tiles already have cost 1)
+            if (sources.some(s => s.pos.x === pos.x && s.pos.y === pos.y)) continue;
+            // Never place a road on a tile that already has any structure
             const existing = pos.lookFor(LOOK_STRUCTURES);
+            if (existing.length > 0) continue;
+            // Skip if a road construction site already exists here
             const hasSite = pos.lookFor(LOOK_CONSTRUCTION_SITES).some(s => s.structureType === STRUCTURE_ROAD);
-            const hasRoad = existing.some(s => s.structureType === STRUCTURE_ROAD);
-            if (!hasRoad && !hasSite) {
-                room.createConstructionSite(pos.x, pos.y, STRUCTURE_ROAD);
-            }
+            if (hasSite) continue;
+            room.createConstructionSite(pos.x, pos.y, STRUCTURE_ROAD);
         }
     }
 }
