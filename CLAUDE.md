@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent Usage
+
+**Always delegate all tasks — implementation, analysis, debugging, and advice — to the `screeps-expert` agent. Never implement Screeps changes directly. No exceptions.**
+
 ## Project Overview
 
 This is a [Screeps](https://store.screeps.com/) AI bot written in plain JavaScript competing on the MMO server. Screeps is a programming game where you write code to control units ("creeps") that mine resources, build structures, and compete against other players.
