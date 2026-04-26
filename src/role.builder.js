@@ -8,16 +8,16 @@ function constructionPriority(rcl) {
         STRUCTURE_LINK,
         STRUCTURE_CONTAINER,
         STRUCTURE_STORAGE,
-        STRUCTURE_RAMPART,
         STRUCTURE_WALL,
+        STRUCTURE_RAMPART,
         STRUCTURE_ROAD,
     ];
     return [
         STRUCTURE_EXTENSION,
         STRUCTURE_CONTAINER,
         STRUCTURE_STORAGE,
-        STRUCTURE_RAMPART,
         STRUCTURE_WALL,
+        STRUCTURE_RAMPART,
         STRUCTURE_ROAD,
     ];
 }
