@@ -90,11 +90,7 @@ const roleUpgrader = {
 
         // Last resort: mine directly
         if (!creep.memory.sourceId) cache.assignSource(creep);
-        let source = Game.getObjectById(creep.memory.sourceId);
-        if (!source || source.energy === 0) {
-            const active = cache.find(creep.room, FIND_SOURCES).filter(s => s.energy > 0);
-            source = active.length > 0 ? creep.pos.findClosestByRange(active) : source;
-        }
+        const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) return;
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
             creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
