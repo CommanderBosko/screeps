@@ -285,8 +285,10 @@ function spawnForRoom(spawn) {
 
     // Defenders — reactive priority
     const hostiles = cache.find(room, FIND_HOSTILE_CREEPS);
-    if (hostiles.length > 0 && roomCreeps('defender', rn) < 2 && room.energyAvailable >= 200) {
-        const body = room.energyAvailable >= 380
+    if (hostiles.length > 0 && roomCreeps('defender', rn) < 2 && room.energyAvailable >= 190) {
+        // [TOUGH,ATTACK,MOVE,MOVE] = 10+80+50+50 = 190
+        // [TOUGH,TOUGH,ATTACK,ATTACK,MOVE,MOVE] = 20+160+100 = 280
+        const body = room.energyAvailable >= 280
             ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
             : [TOUGH, ATTACK, MOVE, MOVE];
         spawn.spawnCreep(body, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
@@ -308,8 +310,9 @@ function spawnForRoom(spawn) {
         );
         const dyingMiner = minersForSource.find(c => c.ticksToLive < MINER_RESPAWN_TTL);
         const needsMiner = minersForSource.length === 0 || dyingMiner;
-        if (needsMiner && minersForSource.length < 2 && room.energyAvailable >= 200) {
-            // Use energyCapacityAvailable so miner body scales with room, but cap at current energy
+        if (needsMiner && minersForSource.length < 2 && room.energyAvailable >= 150) {
+            // Use energyCapacityAvailable so miner body scales with room, but cap at current energy.
+            // Minimum body [WORK,MOVE]=150; don't spawn below that.
             const minerEnergy = Math.min(room.energyCapacityAvailable, room.energyAvailable);
             spawn.spawnCreep(getBody('miner', minerEnergy), 'Miner' + Game.time, {
                 memory: { role: 'miner', sourceId: source.id, homeRoom: rn }
@@ -350,7 +353,8 @@ function spawnForRoom(spawn) {
         const pioneers = _.filter(Game.creeps, c =>
             c.memory.role === 'pioneer' && c.memory.targetRoom === targetRoomName
         ).length;
-        if (pioneers < 3 && room.energyAvailable >= 550) {
+        if (pioneers < 3 && room.energyAvailable >= 450) {
+            // [WORK×2,CARRY×2,MOVE×3] = 200+100+150 = 450
             spawn.spawnCreep([WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], 'Pioneer' + Game.time, {
                 memory: { role: 'pioneer', targetRoom: targetRoomName, homeRoom: rn }
             });
@@ -361,8 +365,10 @@ function spawnForRoom(spawn) {
     // Attackers — squad of 5 when an attack target is set
     if (Memory.attackTarget) {
         const attackers = _.filter(Game.creeps, c => c.memory.role === 'attacker').length;
-        if (attackers < 5 && room.energyAvailable >= 480) {
-            const body = room.energyAvailable >= 720
+        if (attackers < 5 && room.energyAvailable >= 380) {
+            // [TOUGH×2,ATTACK×2,MOVE×4] = 20+160+200 = 380
+            // [TOUGH×3,ATTACK×3,MOVE×6] = 30+240+300 = 570
+            const body = room.energyAvailable >= 570
                 ? [TOUGH, TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE]
                 : [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE];
             spawn.spawnCreep(body, 'Attacker' + Game.time, {
@@ -406,35 +412,84 @@ function spawnForRoom(spawn) {
 function getBody(role, energy) {
     switch (role) {
         case 'miner':
-            // 5-WORK miner saturates a source (10 energy/tick). 3-WORK is a decent interim.
-            if (energy >= 550) return [WORK, WORK, WORK, WORK, WORK, MOVE];
-            if (energy >= 350) return [WORK, WORK, WORK, MOVE];
-            return [WORK, CARRY, MOVE];
+            // 5-WORK saturates a source (10 energy/tick). Stationary — only needs 1 MOVE.
+            // Breakpoints match exact body costs to prevent spawn rejection.
+            if (energy >= 550) return [WORK, WORK, WORK, WORK, WORK, MOVE];  // 550 cost
+            if (energy >= 400) return [WORK, WORK, WORK, MOVE];              // 400 cost
+            if (energy >= 250) return [WORK, WORK, MOVE];                    // 250 cost (no CARRY — stationary)
+            return [WORK, MOVE];                                              // 150 cost
 
         case 'hauler':
-            // Scale CARRY with energy; keep roughly 1 MOVE per 2 CARRY on roads
-            if (energy >= 600) return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE];
-            if (energy >= 450) return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-            if (energy >= 300) return [CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-            return [CARRY, CARRY, MOVE];
+            // 1 MOVE per 2 CARRY on roads. Scale aggressively — hauler throughput = energy economy.
+            // Breakpoints match exact body costs.
+            if (energy >= 1800) return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+                                        MOVE, MOVE, MOVE, MOVE];             // 24C+12M = 1800
+            if (energy >= 1300) return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        CARRY,
+                                        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE]; // 17C+9M = 1300
+            if (energy >= 1000) return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];             // 13C+7M = 1000
+            if (energy >= 750)  return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE, MOVE];                         // 10C+5M = 750
+            if (energy >= 600)  return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE];                               // 8C+4M = 600
+            if (energy >= 450)  return [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        MOVE, MOVE, MOVE];                                      // 6C+3M = 450
+            if (energy >= 300)  return [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE];               // 4C+2M = 300
+            return [CARRY, CARRY, MOVE];                                                        // 2C+1M = 150
 
         case 'harvester':
-            if (energy >= 550) return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
-            if (energy >= 400) return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
-            return [WORK, CARRY, MOVE];
+            // RCL 1-3 jack-of-all-trades. WORK for mining, CARRY for transport, MOVE for travel.
+            // Road ratio: 1 MOVE per 2 non-MOVE. Breakpoints match exact costs.
+            if (energy >= 800) return [WORK, WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE]; // 5W+2C+4M = 800
+            if (energy >= 550) return [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];             // 3W+2C+3M = 550
+            if (energy >= 500) return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];                         // 2W+2C+2M = 500
+            if (energy >= 400) return [WORK, WORK, CARRY, MOVE, MOVE];                                // 2W+1C+2M = 400
+            if (energy >= 300) return [WORK, CARRY, CARRY, MOVE, MOVE];                               // 1W+2C+2M = 300 (more carry = faster fill at RCL1)
+            return [WORK, CARRY, MOVE];                                                                // 1W+1C+1M = 200
 
         case 'upgrader':
-            // More WORK = faster RCL progression. Cap MOVE at what's needed.
-            if (energy >= 800) return [WORK, WORK, WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
-            if (energy >= 600) return [WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE];
-            if (energy >= 450) return [WORK, WORK, WORK, CARRY, MOVE, MOVE];
-            return [WORK, CARRY, MOVE];
+            // Maximize WORK — each part = 1 energy/tick to controller.
+            // Upgrader is nearly stationary (walks to controller once), so MOVE is minimal.
+            // 2 CARRY is enough buffer at any scale; adds WORK beyond that.
+            // Breakpoints match exact body costs.
+            if (energy >= 1300) return [WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+                                        CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE];            // 10W+2C+4M = 1300
+            if (energy >= 1050) return [WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+                                        CARRY, CARRY,
+                                        MOVE, MOVE, MOVE];                  // 8W+2C+3M = 1050
+            if (energy >= 800)  return [WORK, WORK, WORK, WORK, WORK, WORK,
+                                        CARRY, CARRY,
+                                        MOVE, MOVE];                        // 6W+2C+2M = 800
+            if (energy >= 600)  return [WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE];  // 4W+2C+2M = 600
+            if (energy >= 450)  return [WORK, WORK, WORK, CARRY, MOVE, MOVE];               // 3W+1C+2M = 450
+            if (energy >= 300)  return [WORK, WORK, CARRY, MOVE];                           // 2W+1C+1M = 300
+            return [WORK, CARRY, MOVE];                                                      // 1W+1C+1M = 200
 
         case 'builder':
         case 'repairer':
-            if (energy >= 550) return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
-            if (energy >= 400) return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];
-            return [WORK, CARRY, MOVE];
+            // Equal WORK/CARRY split for balanced build/repair throughput; full road speed.
+            // 1 MOVE per 2 non-MOVE (WORK+CARRY). Breakpoints match exact costs.
+            if (energy >= 1300) return [WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+                                        CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];       // 7W+6C+6M = 1300 (road: 13 non-MOVE → 7 MOVE ideal, 6 = ~85% speed)
+            if (energy >= 1000) return [WORK, WORK, WORK, WORK, WORK,
+                                        CARRY, CARRY, CARRY, CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE, MOVE];             // 5W+5C+5M = 1000 (full road speed)
+            if (energy >= 800)  return [WORK, WORK, WORK, WORK,
+                                        CARRY, CARRY, CARRY, CARRY,
+                                        MOVE, MOVE, MOVE, MOVE];                   // 4W+4C+4M = 800 (full road speed)
+            if (energy >= 600)  return [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE]; // 3W+3C+3M = 600 (full road speed)
+            if (energy >= 500)  return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];             // 2W+2C+2M = 500 (4 non-MOVE → 2 MOVE = full speed)
+            if (energy >= 400)  return [WORK, WORK, CARRY, MOVE, MOVE];                    // 2W+1C+2M = 400 (3 non-MOVE → 2 MOVE ≈ full speed)
+            return [WORK, CARRY, MOVE];                                                     // 1W+1C+1M = 200
 
         default:
             return [WORK, CARRY, MOVE];
