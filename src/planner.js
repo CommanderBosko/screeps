@@ -73,6 +73,7 @@ function findHub(room, dist) {
     return hub;
 }
 
+// Count built structures + construction sites of a given type in the room.
 function countType(room, structureType) {
     const built = room.find(FIND_MY_STRUCTURES, { filter: s => s.structureType === structureType }).length;
     const sites = room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.structureType === structureType }).length;
@@ -81,6 +82,20 @@ function countType(room, structureType) {
 
 function totalSites(room) {
     return room.find(FIND_CONSTRUCTION_SITES).length;
+}
+
+// True if a position is blocked by any non-road structure or construction site.
+// Roads are transparent to extension placement — we just want to avoid colliding
+// with spawns, towers, containers, links, etc.
+function isClearForStructure(room, x, y) {
+    const pos = new RoomPosition(x, y, room.name);
+    const structs = pos.lookFor(LOOK_STRUCTURES);
+    for (const s of structs) {
+        if (s.structureType !== STRUCTURE_ROAD) return false;
+    }
+    const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+    if (sites.length > 0) return false;
+    return true;
 }
 
 function placeExtensions(room, hub, parity, needed) {
@@ -96,6 +111,7 @@ function placeExtensions(room, hub, parity, needed) {
                 if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                 if ((x + y) % 2 !== parity) continue;
                 if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                if (!isClearForStructure(room, x, y)) continue;
                 if (totalSites(room) >= 90) return;
                 if (room.createConstructionSite(x, y, STRUCTURE_EXTENSION) === OK) placed++;
             }
@@ -120,6 +136,7 @@ function placeTowers(room, parity, needed) {
                 if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                 if ((x + y) % 2 === parity) continue; // avoid extension parity
                 if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                if (!isClearForStructure(room, x, y)) continue;
                 if (totalSites(room) >= 90) return;
                 if (room.createConstructionSite(x, y, STRUCTURE_TOWER) === OK) placed++;
             }
@@ -136,26 +153,32 @@ function placeLinks(room) {
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     if (!spawn) return;
 
-    // Receiver link: adjacent to storage (preferred) or spawn so haulers have a short trip
+    // Receiver link: adjacent to storage (preferred) or spawn so haulers have a short trip.
+    // Use range 1 (not 2) to detect so we don't confuse a nearby source link for a receiver.
     const anchor = room.storage || spawn;
     const hasReceiver =
-        anchor.pos.findInRange(FIND_MY_STRUCTURES, 2, { filter: s => s.structureType === STRUCTURE_LINK }).length +
-        anchor.pos.findInRange(FIND_CONSTRUCTION_SITES, 2, { filter: s => s.structureType === STRUCTURE_LINK }).length > 0;
+        anchor.pos.findInRange(FIND_MY_STRUCTURES, 1, { filter: s => s.structureType === STRUCTURE_LINK }).length +
+        anchor.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, { filter: s => s.structureType === STRUCTURE_LINK }).length > 0;
 
     if (!hasReceiver && countType(room, STRUCTURE_LINK) < limit) {
+        outer:
         for (let dx = -1; dx <= 1; dx++) {
             for (let dy = -1; dy <= 1; dy++) {
                 if (dx === 0 && dy === 0) continue;
                 const x = anchor.pos.x + dx, y = anchor.pos.y + dy;
                 if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                 if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
-                if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) { dx = dy = 2; }
+                if (!isClearForStructure(room, x, y)) continue;
+                if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) {
+                    console.log('Receiver link placed near ' + (room.storage ? 'storage' : 'spawn') + ' in ' + room.name);
+                    break outer;
+                }
             }
         }
     }
 
     // Source links: one per source, preferring tiles also adjacent to the container so
-    // the stationary miner can transfer directly (Chebyshev range 1)
+    // the stationary miner can transfer directly (Chebyshev range 1).
     for (const source of room.find(FIND_SOURCES)) {
         if (countType(room, STRUCTURE_LINK) >= limit) break;
 
@@ -179,6 +202,7 @@ function placeLinks(room) {
                     if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
                     if (Math.abs(x - container.pos.x) > 1 || Math.abs(y - container.pos.y) > 1) continue;
+                    if (!isClearForStructure(room, x, y)) continue;
                     if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) { placed = true; break outer; }
                 }
             }
@@ -192,6 +216,7 @@ function placeLinks(room) {
                     const x = source.pos.x + dx, y = source.pos.y + dy;
                     if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                    if (!isClearForStructure(room, x, y)) continue;
                     if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) { break outer; }
                 }
             }
@@ -216,8 +241,9 @@ function placeLinks(room) {
                             const x = ctrl.pos.x + dx, y = ctrl.pos.y + dy;
                             if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                             if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+                            if (!isClearForStructure(room, x, y)) continue;
                             if (room.createConstructionSite(x, y, STRUCTURE_LINK) === OK) {
-                                console.log('🔗 Upgrader link placed near controller in ' + room.name);
+                                console.log('Upgrader link placed near controller in ' + room.name);
                                 break outer;
                             }
                         }
@@ -273,7 +299,7 @@ function placeControllerContainer(room) {
                 if (x < 2 || x > 47 || y < 2 || y > 47) continue;
                 if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
                 if (room.createConstructionSite(x, y, STRUCTURE_CONTAINER) === OK) {
-                    console.log('📦 Controller container placed in ' + room.name);
+                    console.log('Controller container placed in ' + room.name);
                     return;
                 }
             }
@@ -281,31 +307,94 @@ function placeControllerContainer(room) {
     }
 }
 
+// Place roads along paths from spawn to key destinations.
+// Skips tiles that already have a road or a road construction site.
+// Uses a cost matrix that treats built roads as zero-cost so paths
+// prefer extending existing road networks rather than cutting new ones.
 function placeRoads(room, hub) {
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     if (!spawn) return;
+
+    // Build a cost matrix that treats existing roads as cost 1 (preferred)
+    // and plain/swamp tiles as cost 2 so the pathfinder follows existing roads.
+    const costs = new PathFinder.CostMatrix();
+    const terrain = room.getTerrain();
+    for (let y = 0; y < 50; y++) {
+        for (let x = 0; x < 50; x++) {
+            if (terrain.get(x, y) === TERRAIN_MASK_WALL) {
+                costs.set(x, y, 255);
+            } else {
+                costs.set(x, y, 2); // prefer building on existing paths
+            }
+        }
+    }
+    // Mark existing roads and road sites as cost 1 (already built or planned)
+    for (const road of room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_ROAD })) {
+        costs.set(road.pos.x, road.pos.y, 1);
+    }
+    for (const site of room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.structureType === STRUCTURE_ROAD })) {
+        costs.set(site.pos.x, site.pos.y, 1);
+    }
 
     const ctrl = room.controller;
     const targets = [
         ...room.find(FIND_SOURCES).map(s => s.pos),
         ctrl ? ctrl.pos : null,
         new RoomPosition(hub.x, hub.y, room.name),
+        room.storage ? room.storage.pos : null,
     ].filter(Boolean);
 
     for (const target of targets) {
-        const path = spawn.pos.findPathTo(target, { ignoreCreeps: true, swampCost: 1 });
-        for (const step of path) {
-            room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
+        const result = PathFinder.search(
+            spawn.pos,
+            { pos: target, range: 1 },
+            {
+                roomCallback: () => costs,
+                plainCost: 2,
+                swampCost: 3,
+                maxOps: 2000
+            }
+        );
+        if (result.incomplete) continue;
+        for (const pos of result.path) {
+            // Never place a road on a spawn, controller, source, or extension tile
+            if (pos.x === spawn.pos.x && pos.y === spawn.pos.y) continue;
+            if (ctrl && pos.x === ctrl.pos.x && pos.y === ctrl.pos.y) continue;
+            if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
+            // Only place if nothing is already there (road tiles already have cost 1)
+            const existing = pos.lookFor(LOOK_STRUCTURES);
+            const hasSite = pos.lookFor(LOOK_CONSTRUCTION_SITES).some(s => s.structureType === STRUCTURE_ROAD);
+            const hasRoad = existing.some(s => s.structureType === STRUCTURE_ROAD);
+            if (!hasRoad && !hasSite) {
+                room.createConstructionSite(pos.x, pos.y, STRUCTURE_ROAD);
+            }
         }
     }
+}
 
-    // Road from spawn to storage if it exists
-    if (room.storage) {
-        const path = spawn.pos.findPathTo(room.storage, { ignoreCreeps: true, swampCost: 1 });
-        for (const step of path) {
-            room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
-        }
-    }
+// Detect whether the room is missing structures it should have at current RCL.
+// Returns true if the planner should re-run to fill the gaps.
+function needsReplanning(room, rcl, mem) {
+    if (mem.plan.lastRCL !== rcl) return true; // RCL changed
+
+    // Check critical counts — if anything is below target, replan
+    const extTarget = EXTENSION_LIMITS[rcl] || 0;
+    if (extTarget > 0 && countType(room, STRUCTURE_EXTENSION) < extTarget) return true;
+
+    const towerTarget = TOWER_LIMITS[rcl] || 0;
+    if (towerTarget > 0 && countType(room, STRUCTURE_TOWER) < towerTarget) return true;
+
+    // Containers: one per source + one near controller at RCL 3+
+    const sourceCount = room.find(FIND_SOURCES).length;
+    const containerCount = countType(room, STRUCTURE_CONTAINER);
+    const expectedContainers = rcl >= 3 ? sourceCount + 1 : sourceCount;
+    if (containerCount < expectedContainers) return true;
+
+    // Links: check if we're below limit
+    const linkTarget = LINK_LIMITS[rcl] || 0;
+    if (linkTarget > 0 && countType(room, STRUCTURE_LINK) < linkTarget) return true;
+
+    return false;
 }
 
 const planner = {
@@ -318,11 +407,15 @@ const planner = {
         const mem = Memory.rooms[room.name];
         if (!mem.plan) mem.plan = {};
 
-        if (mem.plan.lastRCL === rcl) return;
+        // Replan if RCL changed OR if structures were destroyed/missing.
+        // needsReplanning is cheap (a few find calls) and prevents the bot from
+        // staying broken after enemy raids without waiting for the next RCL up.
+        if (!needsReplanning(room, rcl, mem)) return;
 
         const spawn = room.find(FIND_MY_SPAWNS)[0];
         if (!spawn) return;
 
+        // Hub is stable for the lifetime of the room — compute once and cache.
         if (!mem.plan.hub) {
             const dist = distanceTransform(room);
             mem.plan.hub = findHub(room, dist);
@@ -347,8 +440,18 @@ const planner = {
 
         if (rcl >= 2) placeRoads(room, hub);
 
-        mem.plan.lastRCL = rcl;
-        console.log('Planned structures for ' + room.name + ' at RCL ' + rcl);
+        // Only update lastRCL once all structures are placed at the target count.
+        // If we are still short (site cap hit, terrain blocked, etc.) we will retry
+        // on the next planner invocation rather than silently giving up.
+        const extNow = countType(room, STRUCTURE_EXTENSION);
+        const towerNow = countType(room, STRUCTURE_TOWER);
+        if (extNow >= extTarget && towerNow >= towerTarget) {
+            mem.plan.lastRCL = rcl;
+        }
+
+        console.log('Planner ran for ' + room.name + ' RCL ' + rcl +
+            ' ext=' + extNow + '/' + extTarget +
+            ' towers=' + towerNow + '/' + towerTarget);
     }
 };
 

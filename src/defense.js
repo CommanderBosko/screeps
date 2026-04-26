@@ -2,9 +2,10 @@ const defense = {
     run: function (room) {
         if (!room.controller || !room.controller.my) return;
         if (room.find(FIND_CONSTRUCTION_SITES).length >= 90) return;
+        // NOTE: placeExtensions and placeTowers are intentionally NOT called here.
+        // Planner owns extension and tower placement (hub parity pattern). Calling
+        // them here would conflict with the planned layout and waste site budget.
         defense.placeStructureRamparts(room);
-        defense.placeTowers(room);
-        defense.placeExtensions(room);
         defense.placeContainers(room);
         defense.placeRoads(room);
         defense.placeChokepoints(room);
