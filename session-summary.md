@@ -4,6 +4,54 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-04-27 — Tower Repair Pool Unification & Checkerboard Road Rollback
+
+**Duration Estimate**: ~1–2 hours
+**Session Focus**: Fix tower repair target selection so walls and ramparts compete purely on hits (not proximity), add surplus repair mode, and roll back a mistaken checkerboard parity filter on road placement.
+
+### What Was Accomplished
+
+- **Unified wall/rampart repair pool** — extracted `pickWeakestBarrier(structures, maxHits)` helper in `role.tower.js`. All three repair passes (emergency < 500 HP, floor target, surplus top-up) now call this helper. Walls and ramparts compete in one pool sorted solely by hits. The previous proximity preference (`tower.pos.inRangeTo(s, 10)`) was removed — a rampart sitting at 1M HP should never beat a wall at 10k just because it is closer.
+
+- **Surplus repair mode** — when the tower's energy exceeds 700 and every barrier already meets the RCL-scaled HP floor, the tower now calls `pickWeakestBarrier(allStructures, Infinity)` to top barriers toward hitsMax. Previously the tower went idle in this state.
+
+- **Removed stale `tower` parameter** — `pickWeakestBarrier()` no longer accepts or uses a tower reference (proximity logic was the only reason it existed).
+
+- **Reuse `allStructures` across passes** — `cache.find(tower.room, FIND_STRUCTURES)` is now called once at the top of the repair block and reused by all three passes, eliminating two redundant cache lookups per tick.
+
+- **Persist hub parity to `mem.parity`** — `planner.js` now writes the hub parity into room memory so other modules can read it without recomputing `(hub.x + hub.y) % 2`.
+
+- **Checkerboard road parity rolled back** — a parity filter was added to `planner.js` to restrict road placement to `(x+y) % 2 === parity` tiles, with a matching tower skip for off-parity roads. After expert analysis this was reverted: gap roads give the pathfinder nothing to steer between parity tiles, and off-parity roads already in the room would take ~57 real days to decay naturally. Parity remains correctly scoped to extension/tower layout only.
+
+### Files Changed
+
+- `src/role.tower.js` — extracted `pickWeakestBarrier()` helper; unified repair pool (no proximity); surplus mode added; `allStructures` reused; added `SURPLUS_THRESHOLD = 700` constant
+- `src/planner.js` — persist hub parity to `mem.parity`; clarified road cost-1 comment; checkerboard road filter added then reverted (net result: only parity persistence remains)
+
+### Commits This Session
+
+- `4477e29` — Unify wall/rampart repair pool and expose hub parity in memory
+
+### Decisions Made
+
+- **Proximity preference removed from barrier repair** — tower efficiency delta (~150 vs ~300 HP/tick based on range) is never large enough to justify repairing the wrong structure. Lowest hits always wins.
+- **Surplus mode threshold at 700** — leaves 200 headroom above `REPAIR_RESERVE` (200) before surplus fires, so the tower does not start topping up barriers when it is nearly empty.
+- **Checkerboard roads rejected** — gapped road networks and a ~57 real-day natural decay clock for already-placed off-parity roads made the feature impractical. Parity is only meaningful for the extension/tower hub layout.
+
+### Issues Encountered
+
+- Checkerboard parity filter initially included road placement, which creates isolated road tiles with no connecting path between them — pathfinder has nothing to follow. Caught in review before being deployed live.
+
+### Remaining / Next Session
+
+- Deploy and verify in-game: walls at 1 HP get emergency-repaired by towers within a few ticks; surplus mode activates once barriers clear the RCL floor
+- Watch source rebalancing at 20t cadence for creep churn — raise to 30–50t if thrashing is visible
+- Confirm hauler count drops to 1 when link network activates at RCL 5+
+- Test multi-room expansion: scout → claimer → pioneer pipeline
+- Consider deleting or consolidating `defense.js` (mostly empty after planner consolidation)
+
+---
+
 ## Session: 2026-04-26 — Defense Hardening & CPU Optimization
 
 **Duration Estimate**: ~3 hours (commits span 16:52–18:39)

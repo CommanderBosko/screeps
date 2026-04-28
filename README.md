@@ -24,7 +24,8 @@ Active development — mid-game systems stable. Bot progresses through RCL 1–5
 - 90-site cap respected; roads coexist with ramparts but not other structures
 
 **Defense**
-- Towers attack hostiles (attackers prioritized), heal wounded creeps, emergency-repair dying barriers (< 500 HP), repair damaged structures, then raise walls/ramparts to HP tier target
+- Towers attack hostiles (attackers prioritized), heal wounded creeps, emergency-repair dying barriers (< 500 HP), repair damaged structures, raise walls/ramparts to HP tier target, then top up barriers toward hitsMax when energy is surplus (> 700)
+- All repair passes use a unified wall+rampart pool sorted by lowest hits — no proximity preference; `pickWeakestBarrier()` is the single authority
 - HP targets: 10k (RCL 2–3), 50k (RCL 4–5), 150k (RCL 6–7), 300k (RCL 8) via `cache.getWallTarget()`
 - Repairers share the same HP targets and fill towers first before beginning repair work
 - Safe-mode auto-activation when hostile combat creeps are present and towers are low on energy
@@ -111,6 +112,14 @@ push.js             — Upload script: reads src/*.js and POSTs to Screeps API
 ```
 
 ## Recent Changes
+
+### 2026-04-27 — Tower Repair Pool Unification
+
+- Walls and ramparts now compete in a single pool sorted by hits — proximity preference removed from all repair passes
+- Extracted `pickWeakestBarrier()` helper used by emergency, floor, and surplus repair passes
+- Surplus repair mode: when tower energy > 700 and all barriers meet the RCL floor, tower tops barriers toward hitsMax
+- Hub parity persisted to `room.memory.parity` for use by other modules
+- Checkerboard parity filter on roads rolled back — created gapped road networks incompatible with the pathfinder
 
 ### 2026-04-26 — Defense Hardening & CPU Optimization
 
