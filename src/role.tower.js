@@ -2,12 +2,29 @@ const cache = require('cache');
 
 const ATTACK_PARTS = new Set([ATTACK, RANGED_ATTACK]);
 const REPAIR_RESERVE = 200;
+const SURPLUS_THRESHOLD = 700; // energy above which the tower tops up barriers to full hitsMax
 
 function pickAttackTarget(tower, hostiles) {
     // Prefer creeps that have attack parts — they're the actual threat
     const attackers = hostiles.filter(h => h.body.some(p => ATTACK_PARTS.has(p.type)));
     const pool = attackers.length > 0 ? attackers : hostiles;
     return tower.pos.findClosestByRange(pool);
+}
+
+// Returns the single wall-or-rampart with the absolute lowest hits that is also below
+// maxHits. Walls and ramparts compete in one unified pool — type is irrelevant, only hits
+// count. No proximity preference: picking a rampart at 1M HP because it is near the tower
+// while a wall sits at 10k elsewhere is wrong, and the tower efficiency delta (~150 vs
+// ~300 HP/tick) is never worth choosing the wrong target.
+// Returns null if none qualify.
+function pickWeakestBarrier(structures, maxHits) {
+    const candidates = structures.filter(
+        s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
+             s.hits < maxHits
+    );
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.hits - b.hits);
+    return candidates[0];
 }
 
 const towerLogic = {
@@ -29,25 +46,26 @@ const towerLogic = {
 
         if (tower.store[RESOURCE_ENERGY] <= REPAIR_RESERVE) return;
 
-        // Emergency: repair barriers (ramparts or walls) critically close to 0 HP before anything else.
-        // Ramparts decay 1 HP/tick — if one hits 0 it is destroyed. Walls start at 1 HP so they
-        // also need emergency repair before the regular barrier pass can bring them up to hpTarget.
+        const allStructures = cache.find(tower.room, FIND_STRUCTURES);
+
+        // Emergency: any barrier (wall or rampart) critically close to 0 HP gets immediate
+        // attention before regular structure repair. Ramparts decay 1 HP/tick and die at 0;
+        // walls newly placed start at 1 HP. Unified pool — lowest hits wins.
         const BARRIER_EMERGENCY = 500;
-        const dyingBarriers = cache.find(tower.room, FIND_STRUCTURES)
-            .filter(s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) && s.hits < BARRIER_EMERGENCY);
-        if (dyingBarriers.length > 0) {
-            dyingBarriers.sort((a, b) => a.hits - b.hits);
-            tower.repair(dyingBarriers[0]);
+        const emergencyTarget = pickWeakestBarrier(allStructures, BARRIER_EMERGENCY);
+        if (emergencyTarget) {
+            tower.repair(emergencyTarget);
             return;
         }
 
         // Repair non-wall/rampart structures.
         // Prefer the most-damaged structure within range 10 (tower is most efficient close up);
         // fall back to the globally most-damaged if nothing nearby needs work.
-        const damaged = cache.find(tower.room, FIND_STRUCTURES)
-            .filter(s => s.hits < s.hitsMax &&
-                s.structureType !== STRUCTURE_WALL &&
-                s.structureType !== STRUCTURE_RAMPART);
+        const damaged = allStructures.filter(
+            s => s.hits < s.hitsMax &&
+                 s.structureType !== STRUCTURE_WALL &&
+                 s.structureType !== STRUCTURE_RAMPART
+        );
         if (damaged.length > 0) {
             const nearby = damaged.filter(s => tower.pos.inRangeTo(s, 10));
             const pool = nearby.length > 0 ? nearby : damaged;
@@ -56,16 +74,23 @@ const towerLogic = {
             return;
         }
 
-        // Repair ramparts/walls below HP floor.
-        // Prefer the weakest barrier within range 10 (efficient energy use); fall back globally.
+        // Repair walls and ramparts below the RCL-scaled HP floor.
+        // Both types compete in a single pool — the one with the lowest hits is repaired first.
         const hpTarget = cache.getWallTarget(tower.room);
-        const weakBarrier = cache.find(tower.room, FIND_STRUCTURES)
-            .filter(s => (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) && s.hits < hpTarget);
-        if (weakBarrier.length > 0) {
-            const nearbyBarrier = weakBarrier.filter(s => tower.pos.inRangeTo(s, 10));
-            const barrierPool = nearbyBarrier.length > 0 ? nearbyBarrier : weakBarrier;
-            barrierPool.sort((a, b) => a.hits - b.hits);
-            tower.repair(barrierPool[0]);
+        const floorTarget = pickWeakestBarrier(allStructures, hpTarget);
+        if (floorTarget) {
+            tower.repair(floorTarget);
+            return;
+        }
+
+        // Surplus mode: all barriers are at or above the RCL floor — if the tower has ample
+        // energy, top them up toward hitsMax so they are as thick as possible before combat.
+        // Walls and ramparts share a single pool; lowest hits wins.
+        if (tower.store[RESOURCE_ENERGY] > SURPLUS_THRESHOLD) {
+            const surplusTarget = pickWeakestBarrier(allStructures, Infinity);
+            if (surplusTarget) {
+                tower.repair(surplusTarget);
+            }
         }
     }
 };

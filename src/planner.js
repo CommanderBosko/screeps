@@ -328,7 +328,7 @@ function placeRoads(room, hub) {
             }
         }
     }
-    // Mark existing roads and road sites as cost 1 (already built or planned)
+    // Mark existing roads and road sites as cost 1 so the pathfinder follows them.
     for (const road of room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_ROAD })) {
         costs.set(road.pos.x, road.pos.y, 1);
     }
@@ -513,6 +513,7 @@ const planner = {
 
         const hub = mem.plan.hub;
         const parity = (hub.x + hub.y) % 2;
+        mem.parity = parity;
 
         const extTarget = EXTENSION_LIMITS[rcl] || 0;
         const extHave = countType(room, STRUCTURE_EXTENSION);
