@@ -3,12 +3,39 @@ const cache = require('cache');
 // Hauler: drains receiver links / containers, fills spawns → extensions → towers → storage.
 // At RCL 4+ with links, this is the primary energy distribution role.
 
+// Container selection: if both containers are at or above this fill ratio, prefer the
+// closest one (less travel) rather than the marginally fuller one.
+const CONTAINER_FULL_THRESHOLD = 0.8;
+
+/**
+ * Pick the best container for a hauler to withdraw from.
+ * - If one container is meaningfully fuller than CONTAINER_FULL_THRESHOLD, prefer it.
+ * - If both are above the threshold (i.e. both near-full), prefer the closest one.
+ * - Otherwise fall back to the most-full container.
+ */
+function pickContainer(creep, containers) {
+    if (containers.length === 1) return containers[0];
+
+    const fullest = containers.reduce((a, b) =>
+        a.store[RESOURCE_ENERGY] >= b.store[RESOURCE_ENERGY] ? a : b);
+
+    const allNearFull = containers.every(
+        c => c.store[RESOURCE_ENERGY] / c.store.getCapacity(RESOURCE_ENERGY) >= CONTAINER_FULL_THRESHOLD
+    );
+
+    if (allNearFull) {
+        return creep.pos.findClosestByRange(containers);
+    }
+    return fullest;
+}
+
 const roleHauler = {
     run: function (creep) {
         if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.delivering = false;
         }
-        if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
+        if (!creep.memory.delivering &&
+            creep.store[RESOURCE_ENERGY] >= creep.store.getCapacity() * 0.5) {
             creep.memory.delivering = true;
         }
 
@@ -28,8 +55,7 @@ const roleHauler = {
                     const containers = cache.find(creep.room, FIND_STRUCTURES)
                         .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
                     if (containers.length > 0) {
-                        const src = containers.reduce((a, b) =>
-                            a.store[RESOURCE_ENERGY] >= b.store[RESOURCE_ENERGY] ? a : b);
+                        const src = pickContainer(creep, containers);
                         if (creep.withdraw(src, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                             creep.moveTo(src, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
                         }
@@ -48,7 +74,7 @@ const roleHauler = {
             return;
         }
 
-        if (cache.pickupNearby(creep)) return;
+        if (cache.pickupNearby(creep, 5)) return;
 
         // Receiver links sit near spawn/storage — withdraw here first (shortest trip)
         const { receiverLinks } = cache.getLinkRoles(creep.room);
@@ -62,12 +88,29 @@ const roleHauler = {
             return;
         }
 
-        // Fall back to containers (no-link rooms or overflow)
+        // Pinned to a specific container (pre-link mode)
+        if (creep.memory.containerId) {
+            const container = Game.getObjectById(creep.memory.containerId);
+            if (container && container.store[RESOURCE_ENERGY] > 0) {
+                if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(container, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                }
+                creep.say('📦');
+                return;
+            }
+            // Container empty or gone — wait near it rather than roaming
+            if (container && !creep.pos.inRangeTo(container, 2)) {
+                creep.moveTo(container, { visualizePathStyle: { stroke: '#aaaaaa' }, reusePath: 10 });
+            }
+            creep.say('⏳');
+            return;
+        }
+
+        // Unassigned fallback (should only apply in link mode or edge cases)
         const containers = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
         if (containers.length > 0) {
-            const target = containers.reduce((a, b) =>
-                a.store[RESOURCE_ENERGY] >= b.store[RESOURCE_ENERGY] ? a : b);
+            const target = pickContainer(creep, containers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
             }
@@ -93,7 +136,7 @@ const roleHauler = {
         );
         if (extensions.length > 0) return creep.pos.findClosestByPath(extensions);
 
-        // Priority 3: towers (defensive capability)
+        // Priority 3: towers (keep full for defense and safe mode)
         const towers = myStructs.filter(s =>
             s.structureType === STRUCTURE_TOWER &&
             s.store.getFreeCapacity(RESOURCE_ENERGY) > 0

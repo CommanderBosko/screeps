@@ -4,6 +4,7 @@ const roleRepairer = {
     run: function (creep) {
         if (creep.memory.repairing && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.repairing = false;
+            creep.memory.repairTarget = null;
         }
         if (!creep.memory.repairing && creep.store.getFreeCapacity() === 0) {
             creep.memory.repairing = true;
@@ -12,12 +13,27 @@ const roleRepairer = {
         if (creep.memory.repairing) {
             roleRepairer.doRepair(creep);
         } else {
-            roleRepairer.getEnergy(creep);
+            if (roleRepairer.hasWork(creep)) {
+                roleRepairer.getEnergy(creep);
+            } else {
+                // Nothing to repair — dump any carried energy and idle
+                if (creep.store[RESOURCE_ENERGY] > 0) {
+                    const storage = creep.room.storage;
+                    if (storage) {
+                        if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+                        }
+                        return;
+                    }
+                }
+                creep.say('💤');
+            }
         }
     },
 
     doRepair: function (creep) {
         const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
+        const hasTower = myStructs.some(s => s.structureType === STRUCTURE_TOWER);
 
         // Fill towers first (top priority for towers below 50%)
         const towers = myStructs.filter(s =>
@@ -34,7 +50,6 @@ const roleRepairer = {
         }
 
         // Emergency: repair ramparts critically close to 0 HP before normal maintenance.
-        // 1 HP/tick decay means a 500-HP rampart survives only ~500 ticks without repair.
         const RAMPART_EMERGENCY = 500;
         const dyingRamparts = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_RAMPART && s.hits < RAMPART_EMERGENCY);
@@ -48,38 +63,82 @@ const roleRepairer = {
             return;
         }
 
-        // Repair damaged non-wall structures (roads, containers, spawn, etc.)
-        const damaged = cache.find(creep.room, FIND_STRUCTURES)
-            .filter(s =>
-                s.hits < s.hitsMax &&
-                s.structureType !== STRUCTURE_WALL &&
-                s.structureType !== STRUCTURE_RAMPART
-            );
-        if (damaged.length > 0) {
-            // Sort by hit % so most degraded gets fixed first
-            damaged.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
-            const target = damaged[0];
-            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+        // Without a tower, repair roads/containers/etc. before barriers
+        // (no tower means no other structure is maintaining non-barriers).
+        if (!hasTower) {
+            const damaged = cache.find(creep.room, FIND_STRUCTURES)
+                .filter(s =>
+                    s.hits < s.hitsMax &&
+                    s.structureType !== STRUCTURE_WALL &&
+                    s.structureType !== STRUCTURE_RAMPART
+                );
+            if (damaged.length > 0) {
+                damaged.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
+                const target = damaged[0];
+                if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+                }
+                creep.say('🔧');
+                return;
             }
-            creep.say('🔧');
-            return;
         }
 
-        // Repair walls/ramparts below HP floor
-        const hpTarget = cache.getWallTarget(creep.room);
-        const weakBarrier = cache.find(creep.room, FIND_STRUCTURES)
-            .filter(s =>
+        // With a tower present: barriers take priority over non-barrier maintenance.
+        // Tower already handles road/container upkeep at idle — repairer should focus on
+        // walls and ramparts which towers do not raise high enough on their own.
+        // Persist target in memory so the creep commits its full energy load to one barrier
+        // instead of re-sorting every tick (walls can have up to 300M maxHits).
+        if (hasTower) {
+            const allStructures2 = cache.find(creep.room, FIND_STRUCTURES);
+            const hasWeakBarrier = allStructures2.some(s =>
                 (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
-                s.hits < hpTarget
+                s.hits < s.hitsMax
             );
-        if (weakBarrier.length > 0) {
-            weakBarrier.sort((a, b) => a.hits - b.hits);
-            if (creep.repair(weakBarrier[0]) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(weakBarrier[0], { visualizePathStyle: { stroke: '#aaaaaa' } });
+            if (hasWeakBarrier) {
+                // Validate persisted target: must still exist and still be below maxHits
+                let barrierTarget = creep.memory.repairTarget
+                    ? Game.getObjectById(creep.memory.repairTarget)
+                    : null;
+                if (!barrierTarget || barrierTarget.hits >= barrierTarget.hitsMax) {
+                    // Pick the weakest barrier by absolute HP and lock onto it
+                    const weakBarrier = allStructures2.filter(s =>
+                        (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
+                        s.hits < s.hitsMax
+                    );
+                    weakBarrier.sort((a, b) => a.hits - b.hits);
+                    barrierTarget = weakBarrier[0] || null;
+                    creep.memory.repairTarget = barrierTarget ? barrierTarget.id : null;
+                }
+                if (barrierTarget) {
+                    if (creep.repair(barrierTarget) === ERR_NOT_IN_RANGE) {
+                        creep.moveTo(barrierTarget, { visualizePathStyle: { stroke: '#aaaaaa' } });
+                    }
+                    creep.say('🧱');
+                    return;
+                }
             }
-            creep.say('🧱');
-            return;
+            // No barriers need work — clear any stale target
+            creep.memory.repairTarget = null;
+        }
+
+        // No barriers need work — fall back to non-barrier maintenance (roads, containers, etc.)
+        // Only reached when all walls/ramparts are at maxHits.
+        if (hasTower) {
+            const damagedNonBarrier = cache.find(creep.room, FIND_STRUCTURES)
+                .filter(s =>
+                    s.hits < s.hitsMax &&
+                    s.structureType !== STRUCTURE_WALL &&
+                    s.structureType !== STRUCTURE_RAMPART
+                );
+            if (damagedNonBarrier.length > 0) {
+                damagedNonBarrier.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
+                const target = damagedNonBarrier[0];
+                if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+                }
+                creep.say('🔧');
+                return;
+            }
         }
 
         // Nothing to repair — dump energy into storage or park near spawn
@@ -154,6 +213,30 @@ const roleRepairer = {
             creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
         }
         creep.say('⛏️');
+    },
+
+    hasWork: function (creep) {
+        const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
+        const hasTower = myStructs.some(s => s.structureType === STRUCTURE_TOWER);
+        const allStructures = cache.find(creep.room, FIND_STRUCTURES);
+
+        // Emergency ramparts always count as work
+        if (allStructures.some(s => s.structureType === STRUCTURE_RAMPART && s.hits < 500)) return true;
+
+        // Any non-barrier structure below maxHits counts as work (with or without tower)
+        if (allStructures.some(s =>
+            s.hits < s.hitsMax &&
+            s.structureType !== STRUCTURE_WALL &&
+            s.structureType !== STRUCTURE_RAMPART
+        )) return true;
+
+        // Any barrier below maxHits counts as work when a tower exists
+        if (hasTower && allStructures.some(s =>
+            (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
+            s.hits < s.hitsMax
+        )) return true;
+
+        return false;
     }
 };
 

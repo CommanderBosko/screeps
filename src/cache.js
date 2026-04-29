@@ -77,13 +77,14 @@ const cache = {
     },
 
     // Pick up dropped energy or withdraw from tombstones/ruins. Returns true if acted.
-    pickupNearby: function (creep) {
+    pickupNearby: function (creep, maxRange = Infinity) {
+        const inRange = t => maxRange === Infinity || creep.pos.inRangeTo(t, maxRange);
         const dropped = this.find(creep.room, FIND_DROPPED_RESOURCES)
-            .filter(r => r.resourceType === RESOURCE_ENERGY && r.amount >= 50);
+            .filter(r => r.resourceType === RESOURCE_ENERGY && r.amount >= 50 && inRange(r));
         const tombstones = this.find(creep.room, FIND_TOMBSTONES)
-            .filter(t => t.store[RESOURCE_ENERGY] > 0);
+            .filter(t => t.store[RESOURCE_ENERGY] > 0 && inRange(t));
         const ruins = this.find(creep.room, FIND_RUINS)
-            .filter(r => r.store[RESOURCE_ENERGY] > 0);
+            .filter(r => r.store[RESOURCE_ENERGY] > 0 && inRange(r));
         const targets = [...dropped, ...tombstones, ...ruins];
         if (targets.length === 0) return false;
         const target = creep.pos.findClosestByRange(targets);

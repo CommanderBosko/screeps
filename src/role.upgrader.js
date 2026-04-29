@@ -26,7 +26,7 @@ const roleUpgrader = {
     },
 
     getEnergy: function (creep) {
-        if (cache.pickupNearby(creep)) return;
+        if (cache.pickupNearby(creep, 5)) return;
 
         // Check for a controller-adjacent link (receiver link near controller)
         // This is the RCL 6+ upgrader link pattern — withdraw without moving
@@ -68,16 +68,16 @@ const roleUpgrader = {
             }
         }
 
-        // Any non-source container
+        // Any non-source container (prefer not competing with haulers at source containers)
         const sources = cache.find(creep.room, FIND_SOURCES);
-        const containers = cache.find(creep.room, FIND_STRUCTURES)
-            .filter(s =>
-                s.structureType === STRUCTURE_CONTAINER &&
-                s.store[RESOURCE_ENERGY] > 0 &&
-                !sources.some(src => s.pos.inRangeTo(src, 1))
-            );
-        if (containers.length > 0) {
-            const target = creep.pos.findClosestByRange(containers);
+        const allContainers = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
+        const nonSourceContainers = allContainers.filter(
+            s => !sources.some(src => s.pos.inRangeTo(src, 1))
+        );
+        const containerPool = nonSourceContainers.length > 0 ? nonSourceContainers : allContainers;
+        if (containerPool.length > 0) {
+            const target = creep.pos.findClosestByRange(containerPool);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }

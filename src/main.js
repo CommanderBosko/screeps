@@ -295,14 +295,25 @@ function spawnForRoom(spawn) {
 
     // Defenders — reactive priority
     const hostiles = cache.find(room, FIND_HOSTILE_CREEPS);
-    if (hostiles.length > 0 && roomCreeps('defender', rn) < 2 && room.energyAvailable >= 190) {
-        // [TOUGH,ATTACK,MOVE,MOVE] = 10+80+50+50 = 190
-        // [TOUGH,TOUGH,ATTACK,ATTACK,MOVE,MOVE] = 20+160+100 = 280
-        const body = room.energyAvailable >= 280
-            ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
-            : [TOUGH, ATTACK, MOVE, MOVE];
-        spawn.spawnCreep(body, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
-        return;
+    if (hostiles.length > 0 && roomCreeps('defender', rn) < 2) {
+        const hasHealer = hostiles.some(h => h.body.some(p => p.type === HEAL));
+        const defRole = hasHealer ? 'defender-ranged' : 'defender';
+        const defBody = getBody(defRole, room.energyCapacityAvailable);
+        const defCost = bodyCost(defBody);
+        if (room.energyAvailable >= defCost) {
+            spawn.spawnCreep(defBody, 'Defender' + Game.time, { memory: { role: 'defender', ranged: hasHealer, homeRoom: rn } });
+            return;
+        }
+        // Can't afford ideal body yet — spawn minimum viable defender immediately if no coverage
+        if (roomCreeps('defender', rn) === 0 && room.energyAvailable >= 190) {
+            const emergBody = hasHealer && room.energyAvailable >= 300
+                ? [TOUGH, TOUGH, RANGED_ATTACK, MOVE, MOVE, MOVE]  // 320
+                : room.energyAvailable >= 280
+                    ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
+                    : [TOUGH, ATTACK, MOVE, MOVE];
+            spawn.spawnCreep(emergBody, 'Defender' + Game.time, { memory: { role: 'defender', ranged: hasHealer, homeRoom: rn } });
+            return;
+        }
     }
 
     const rcl = room.controller ? room.controller.level : 0;
@@ -338,7 +349,7 @@ function spawnForRoom(spawn) {
             const needsMiner = minersForContainer.length === 0 || dyingMiner;
             // Don't spawn a miner unless a hauler already exists or the room can afford one.
             // A miner with no hauler will clog its container/receiver link and stop producing.
-            const haulerReady = roomCreeps('hauler', rn) > 0 || room.energyAvailable >= 150;
+            const haulerReady = roomCreeps('hauler', rn) > 0 || room.energyAvailable >= 300;
             // Only count miners that are not about to die — prevents the race where a dying
             // miner blocks spawning its replacement because minersForContainer.length is still 1.
             const activeMinerCount = minersForContainer.filter(c => !c.ticksToLive || c.ticksToLive >= MINER_RESPAWN_TTL).length;
@@ -372,20 +383,44 @@ function spawnForRoom(spawn) {
         return;
     }
 
-    // Haulers — scale with sources/containers; collapse to 1 once links are operational
+    // Haulers — one per source container; collapse to 1 (unassigned) once links are operational
     if (rcl >= 4) {
-        const sourcesWithContainer = roomSources.filter(s =>
-            s.pos.findInRange(FIND_STRUCTURES, 1, { filter: t => t.structureType === STRUCTURE_CONTAINER }).length > 0
-        ).length;
-        // Only collapse to 1 hauler when the link network is actually operational:
-        // requires at least one source link AND at least one receiver link (near spawn/storage).
-        // linksBuilt >= 2 is insufficient — two source links with no receiver = no energy transfer.
         const { srcLinks, receiverLinks } = cache.getLinkRoles(room);
         const linkNetworkOperational = srcLinks.length >= 1 && receiverLinks.length >= 1;
-        const haulerMax = linkNetworkOperational ? 1 : sourcesWithContainer;
-        if (haulerMax > 0 && roomCreeps('hauler', rn) < haulerMax && room.energyAvailable >= 150) {
-            spawnStandard(spawn, 'hauler', rn);
-            return;
+
+        if (linkNetworkOperational) {
+            // Link mode: single unassigned hauler drains receiver link
+            const activeHaulers = _.filter(Game.creeps, c =>
+                c.memory.role === 'hauler' && c.memory.homeRoom === rn &&
+                (!c.ticksToLive || c.ticksToLive >= MINER_RESPAWN_TTL)
+            ).length;
+            if (activeHaulers < 1 && room.energyAvailable >= 300) {
+                spawnStandard(spawn, 'hauler', rn);
+                return;
+            }
+        } else {
+            // Container mode: one hauler pinned to each source container
+            for (const source of roomSources) {
+                const containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+                    filter: s => s.structureType === STRUCTURE_CONTAINER
+                });
+                for (const container of containers) {
+                    const assigned = _.filter(Game.creeps, c =>
+                        c.memory.role === 'hauler' && c.memory.containerId === container.id &&
+                        (!c.ticksToLive || c.ticksToLive >= MINER_RESPAWN_TTL)
+                    ).length;
+                    if (assigned < 1 && room.energyAvailable >= 300) {
+                        const body = getBody('hauler', room.energyCapacityAvailable);
+                        const cost = bodyCost(body);
+                        if (room.energyAvailable >= cost) {
+                            spawn.spawnCreep(body, 'Hauler' + Game.time, {
+                                memory: { role: 'hauler', containerId: container.id, homeRoom: rn }
+                            });
+                            return;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -473,7 +508,6 @@ function spawnForRoom(spawn) {
     }
 
     // Standard roles — 2 each per room
-    const hasTower = roomMyStructs.some(s => s.structureType === STRUCTURE_TOWER);
     // Gate builders on whether construction sites actually exist — idle builders waste energy.
     const constructionSites = room.find(FIND_CONSTRUCTION_SITES);
     const builderMax = constructionSites.length > 0 ? 2 : 0;
@@ -482,7 +516,7 @@ function spawnForRoom(spawn) {
     const upgraderMax = rcl >= 8 ? 1 : (rcl >= 6 ? 3 : 2);
     // GCL farming mode at RCL 8 — bump to 5 when storage is flush with energy.
     const upgraderMaxFinal = (rcl === 8 && room.storage && room.storage.store[RESOURCE_ENERGY] > 100000) ? 5 : upgraderMax;
-    for (const [role, max] of [['builder', builderMax], ['upgrader', upgraderMaxFinal], ['repairer', hasTower ? 0 : 1]]) {
+    for (const [role, max] of [['builder', builderMax], ['upgrader', upgraderMaxFinal], ['repairer', 1]]) {
         if (roomCreeps(role, rn) < max && room.energyAvailable >= 200) {
             spawnStandard(spawn, role, rn);
             return;
@@ -611,6 +645,34 @@ function getBody(role, energy) {
             if (energy >= 500)  return [WORK, WORK, CARRY, CARRY, MOVE, MOVE];             // 2W+2C+2M = 500 (4 non-MOVE → 2 MOVE = full speed)
             if (energy >= 400)  return [WORK, WORK, CARRY, MOVE, MOVE];                    // 2W+1C+2M = 400 (3 non-MOVE → 2 MOVE ≈ full speed)
             return [WORK, CARRY, MOVE];                                                     // 1W+1C+1M = 200
+
+        case 'defender':
+            // Melee: TOUGH soaks boosted-tower damage, ATTACK kills, MOVE at full road speed.
+            // Ordered TOUGH first so tower heals are most efficient.
+            if (energy >= 1080) return [TOUGH, TOUGH, TOUGH, TOUGH, TOUGH, TOUGH,
+                                        ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK,
+                                        MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];           // 6T+6A+6M = 1020 → use 1080 gate for headroom
+            if (energy >= 730)  return [TOUGH, TOUGH, TOUGH, TOUGH,
+                                        ATTACK, ATTACK, ATTACK, ATTACK,
+                                        MOVE, MOVE, MOVE, MOVE];                        // 4T+4A+4M = 680
+            if (energy >= 460)  return [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK,
+                                        MOVE, MOVE, MOVE];                              // 2T+3A+3M = 410
+            if (energy >= 280)  return [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE];     // 2T+2A+2M = 280
+            return [TOUGH, ATTACK, MOVE, MOVE];                                         // 1T+1A+2M = 190
+
+        case 'defender-ranged':
+            // Ranged: counters healer+ranged squads. TOUGH soaks, RANGED_ATTACK bypasses healing
+            // by dealing consistent damage from distance. 1 MOVE per 2 non-MOVE on roads.
+            if (energy >= 1100) return [TOUGH, TOUGH, TOUGH, TOUGH,
+                                        RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK,
+                                        MOVE, MOVE, MOVE, MOVE];                        // 4T+4RA+4M = 880 → gate 1100 for safety
+            if (energy >= 760)  return [TOUGH, TOUGH, TOUGH,
+                                        RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK,
+                                        MOVE, MOVE, MOVE];                              // 3T+3RA+3M = 630
+            if (energy >= 510)  return [TOUGH, TOUGH, RANGED_ATTACK, RANGED_ATTACK,
+                                        MOVE, MOVE, MOVE];                              // 2T+2RA+3M = 470
+            if (energy >= 320)  return [TOUGH, TOUGH, RANGED_ATTACK, MOVE, MOVE, MOVE]; // 2T+1RA+3M = 320
+            return [TOUGH, RANGED_ATTACK, MOVE, MOVE];                                  // 1T+1RA+2M = 250
 
         default:
             return [WORK, CARRY, MOVE];
