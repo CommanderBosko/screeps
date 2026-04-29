@@ -4,6 +4,86 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-04-28 — Economy Hardening, Stamp Planner Rewrite, Remote/Mineral Roles
+
+**Duration Estimate**: Multi-hour session (22 discrete changes)
+**Session Focus**: Fix a chain of economic correctness bugs at RCL 4+ (emergency guard, miner pre-spawn race, rebalancer interference, link detection), rewrite the planner to use a fixed stamp template, and add two new roles (remote miner, mineral harvester).
+
+### What Was Accomplished
+
+**Bug fixes — spawn/economic correctness:**
+- **Emergency guard fixed** — `roomCreeps('harvester') === 0` added to the RCL 4 emergency condition; previously fired whenever miners or haulers were absent even if harvesters were covering income.
+- **Miner pre-spawn race fixed** — replaced `minersForContainer.length < 1` with `activeMinerCount < 1` (filters out dying miners below `MINER_RESPAWN_TTL=75`), so replacements spawn before the dying miner actually expires.
+- **Miner container rebalancing bug fixed** — `rebalanceSources` now skips all `role==='miner'` creeps; miners own a specific container and must never be source-reassigned mid-life.
+- **Spawn 1 miner per container** — loop changed from "one per source" to "one per container adjacent to source"; `containerId` stamped into miner memory at spawn time so `assignContainer` is bypassed.
+- **Hauler link detection fixed** — replaced `linksBuilt >= 2` with `cache.getLinkRoles(room)` check requiring `srcLinks.length >= 1 && receiverLinks.length >= 1`; two source links with no receiver link wrongly collapsed hauler count to 1.
+- **Miner container invalidation** — `role.miner.js` now detects when `containerId` no longer matches the assigned source (e.g., after a rebalance) and calls `assignContainer` to re-home.
+
+**Spawn logic improvements:**
+- **Upgrader count corrected** — from `rcl>=4?4:3` to `rcl>=6?3:2`; old count assumed income that RCL 4 miners/haulers cannot sustain. GCL farming mode added: 5 upgraders when `rcl===8 && storage>100k`.
+- **Builder count gated on construction sites** — `builderMax=0` when no `FIND_CONSTRUCTION_SITES` exist; idle builders no longer drain energy.
+- **Spawn at full capacity** — `spawnStandard` now computes the target body at `energyCapacityAvailable`, costs it with a new `bodyCost()` helper, and waits until `energyAvailable >= targetCost`; income-critical roles (harvester/miner/hauler) bypass the wait.
+- **Renewal logic refined** — `renewCreeps` at RCL 4+ only renews haulers (already adjacent to spawn when idle); RCL 1–3 renews any role.
+
+**Role behavior improvements:**
+- **Upgrader no direct mining at RCL 4+** — when a link/container supply exists, upgraders park near the controller and wait rather than competing with miners at sources.
+- **Hauler picks fullest container** — changed from `findClosestByPath` to a `reduce` max on `store[RESOURCE_ENERGY]`; drains the most stocked container first to prevent overflow.
+- **Hauler idle behavior** — when nothing needs filling, haulers top up their own store from the fullest container, then park at range 1 of the spawn.
+- **Tower fill threshold removed** — haulers fill towers whenever `getFreeCapacity() > 0` (was only when below 50% capacity).
+- **Hauler reusePath** — raised from 2 to 10 for all `moveTo` calls in the hauler; reduces pathfinding CPU on long delivery routes.
+- **Scout reusePath** — reduced from 50 to 5 to prevent getting stuck on stale empty paths between rooms.
+- **Scout count fix** — counts scouts by `homeRoom` in memory (not current room) so a scout crossing rooms isn't double-counted as zero.
+- **Scout spawn cooldown** — 1500-tick cooldown (`Memory.rooms[rn].lastScoutSpawn`) prevents spam-replacing scouts that die far from home.
+
+**Planner rewrite:**
+- **Stamp/bunker planner** — `planner.js` completely rewritten from BFS flood-fill to a fixed 11×11 stamp template centered on the hub tile. The stamp encodes every structure type (spawn, storage, 60 extensions, 6 towers, receiver link, terminal, 10 labs, observer, nuker, power spawn, internal roads) as `{dx, dy, type}` offsets. RCL limits are enforced per structure type via `STAMP_LIMITS`. A new `stampFits()` function validates the full footprint before committing to a hub candidate. Roads are processed last so structures claim their tiles first.
+
+**New roles:**
+- **`role.remoteMiner.js`** — travels to a `targetRoom` from memory, finds sources, filters out source-keeper-lair-adjacent sources (SK-room aware), mines by `sourceIdx`, and drops energy (no carry infrastructure in remote rooms). Spawned when `Memory.remoteRooms[roomName]` lists target rooms.
+- **`role.mineralHarvester.js`** — RCL 6+, one per room with an extractor and mineral supply. Harvests the room mineral, deposits into terminal first (for market access), then storage. Respects extractor cooldown.
+
+### Files Changed
+
+- `src/main.js` — emergency guard fix; miner-per-container loop; activeMinerCount race fix; link detection via getLinkRoles; upgrader count formula; builderMax gated on sites; spawnStandard full-capacity wait + bodyCost helper; hauler spawn via link roles; renewCreeps RCL gate; rebalanceSources miners excluded; scout homeRoom count + cooldown; remote miner + mineral harvester spawn blocks; ROLE_MAP entries for two new roles
+- `src/planner.js` — complete rewrite: STAMP constant (11×11 template), STAMP_LIMITS map, stampFits() validator, updated findHub() to validate stamp footprint, updated placeStructures() to iterate STAMP entries gated by RCL limits
+- `src/role.hauler.js` — fullest-container pick (reduce); idle fill-then-park behavior; tower fill threshold removed (always fill); reusePath raised to 10 across all moveTo calls
+- `src/role.miner.js` — containerId invalidation guard; assignContainer skipped when containerId already set at spawn
+- `src/role.scout.js` — reusePath reduced to 5
+- `src/role.upgrader.js` — RCL 4+ parks near controller instead of mining directly
+- `src/role.remoteMiner.js` — new file: remote mining with SK-room source filtering
+- `src/role.mineralHarvester.js` — new file: mineral harvest to terminal/storage
+
+### Commits This Session
+
+- `511ba3f` — RCL 4+ economy hardening, stamp planner rewrite, new remote/mineral roles
+
+### Decisions Made
+
+- **Miner per container, not per source** — sources can have more than one adjacent container; binding to the container (not just the source) avoids two miners competing for the same tile.
+- **Full-capacity spawn wait** — one large creep is always more efficient than two small ones on MMO; the wait is bypassed for income-critical roles to prevent starvation.
+- **Stamp over flood-fill** — a fixed stamp gives deterministic, human-readable placement and is far easier to tune than BFS scoring. The hub candidate check now validates the entire footprint fits before committing.
+- **Hauler pulls from fullest container** — prevents a lightly loaded container from growing while a full one is ignored, which can trigger miner stops when miners' containers overflow.
+- **Remote miner drops energy** — simplest correct behavior for rooms with no infrastructure; a follow-up hauler role can collect dropped energy.
+- **Scout cooldown over count** — counting by homeRoom was correct but not sufficient; a 1500-tick cooldown prevents wasted energy when the previous scout died crossing into an unknown room.
+
+### Issues Encountered
+
+- `linksBuilt >= 2` check was masking the real bug (two source links with no receiver = no transfer); the fix required reading `cache.getLinkRoles()` properly.
+- The BFS flood-fill planner had no concept of footprint validation; the stamp approach needed `stampFits()` to avoid placing hub on terrain that couldn't fit the full layout.
+
+### Remaining / Next Session
+
+- Deploy and verify in-game: full-capacity miner spawns correctly before the dying miner expires
+- Confirm builder count drops to 0 when no construction sites remain
+- Verify hauler collapses to 1 when link network is operational (srcLinks>=1, receiverLinks>=1)
+- Test stamp planner against existing rooms — confirm hub placement selects a valid footprint
+- Remote miner: test in a non-SK adjacent room; configure `Memory.remoteRooms` manually
+- Mineral harvester: verify extractor cooldown handling and terminal deposit priority
+- Consider adding a hauler-to-storage withdraw path when storage exists and is below threshold
+- Consider deleting or consolidating `defense.js` (only chokepoint walls remain)
+
+---
+
 ## Session: 2026-04-27 — Tower Repair Pool Unification & Checkerboard Road Rollback
 
 **Duration Estimate**: ~1–2 hours

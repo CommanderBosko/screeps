@@ -1,76 +1,88 @@
 # Project State
 
-_Last updated: 2026-04-27_
+_Last updated: 2026-04-28_
 
 ## Current Project State
 
-The bot is in active mid-game development. Core economic and defensive systems are stable and operational. The bot successfully progresses through RCL 1–5+ with automated structure planning, a miner/hauler economy at RCL 4+, a functional link network, and tower-based defense with rampart/wall maintenance.
+The bot is in active mid-game development. Core economic and defensive systems are stable and corrected. This session fixed a chain of subtle economic correctness bugs at RCL 4+ (emergency guard, miner pre-spawn race, rebalancer interference, link network detection), rewrote the structure planner to use a fixed stamp template, and added two new roles for late-game and remote play.
 
 **What works:**
 - Full RCL 1–8 spawn logic with role prioritization and emergency fallback
-- Miner + hauler economy activates at RCL 4 (miners saturate sources; haulers deliver energy)
+- Emergency guard correctly requires zero harvesters AND zero miners/haulers before firing
+- Miner + hauler economy activates at RCL 4; one miner per container (not per source); `containerId` stamped at spawn; pre-spawn replacement triggered before dying miner expires
+- Miners excluded from `rebalanceSources` — they own their specific container and must never be reassigned mid-life
+- Hauler count correctly collapses to 1 when `srcLinks >= 1 && receiverLinks >= 1` (not just `linksBuilt >= 2`)
 - Link network (RCL 5+) eliminates hauler trips: source links → receiver link near spawn/storage
-- Automated structure planner: extensions, towers, containers, links, roads, ramparts
-- RCL-scaled rampart placement (spawn only at RCL 2–3; full coverage at RCL 5+)
-- Tower logic: attack > heal > emergency barrier repair > general repair > barrier maintenance > surplus top-up
-- Emergency barrier threshold (500 HP) covers both walls and ramparts in a unified pool (lowest hits wins)
-- Wall/rampart HP targets from a per-RCL tier table in `cache.getWallTarget()`: 10k/50k/150k/300k
-- Surplus repair mode: when tower energy > 700 and all barriers meet RCL floor, tower tops them toward hitsMax
-- Hub parity exposed in `room.memory.parity` so other modules need not recompute it
-- Rebalancer corrects source assignment drift every 20 ticks
-- Creep renewal when spawn is idle and creeps have < 400 TTL
-- Safe-mode auto-activation when towers are low and hostiles are present
+- Spawns wait for full-capacity body (`energyAvailable >= bodyCost(targetBody)`); income roles bypass wait
+- Upgrader count corrected to `rcl>=6?3:2`; GCL farming mode at RCL 8 (5 upgraders when storage > 100k)
+- Builders only spawn when construction sites exist
+- Hauler idle: tops up from fullest container, then parks at range 1 of spawn
+- Hauler always fills towers to 100% (no threshold)
+- Renewal at RCL 4+ restricted to haulers only; all roles at RCL 1–3
+- Upgraders park near controller at RCL 4+ instead of competing with miners at sources
+- Scout: counts by homeRoom in memory; 1500-tick cooldown; reusePath=5 (was 50)
+- Stamp planner: fixed 11×11 template with full footprint validation before hub commitment
+- Tower logic: attack > heal > emergency barriers > repair > barrier maintenance > surplus top-up (unchanged)
+- Wall/rampart HP targets from `cache.getWallTarget()`: 10k/50k/150k/300k per RCL
+- Unified wall+rampart repair pool sorted by lowest hits via `pickWeakestBarrier()`
+- Safe-mode auto-activation when hostile combat creeps present and towers low
 - Scout → claimer → pioneer pipeline for automated room expansion (RCL 4+ headroom)
-- Attack squad targeting (manual enable: `Memory.attackEnabled = true`)
+- Remote miner role: travels to `targetRoom`, mines safe sources, drops energy
+- Mineral harvester role: RCL 6+, harvests minerals into terminal then storage
 
 **In progress / known fragile:**
+- Remote miner and mineral harvester are coded but untested in live game
 - Multi-room expansion untested at scale (pioneer + claimer logic exists but is lightly tested)
-- Defense module (`defense.js`) has been stripped to its core — only chokepoint wall placement remains; rampart placement is now fully owned by `planner.js`
+- `defense.js` stripped to only chokepoint wall placement; rampart placement fully owned by `planner.js`
+- Stamp planner untested against live rooms — hub footprint validation is new
 
 **Not yet implemented:**
-- Storage fill/drain logic for haulers (haulers currently deliver to spawn/extensions/towers only)
+- Hauler withdraw from storage (haulers still drain containers/links only, not storage)
 - Automatic nuker management
 - Observer/power creep roles
+- Hauler-to-remote-room energy logistics (remote miner drops energy; no collector yet)
 
 ## Current Goals
 
 ### Short-term (next 1–3 sessions)
-- Deploy and verify in-game: walls at 1 HP are emergency-repaired within a few ticks; surplus mode tops barriers once they meet the RCL floor
-- Test full RCL 5–6 transition with link network active
-- Validate multi-room expansion with a claim attempt
+- Deploy and verify: miner pre-spawn correctly fires before dying miner expires; builder count drops to 0 when no sites; hauler collapses to 1 with link network
+- Verify stamp planner hub placement selects a valid footprint on a real room
+- Test remote miner by setting `Memory.remoteRooms` and watching in game
+- Test mineral harvester at RCL 6 (confirm extractor cooldown handling and terminal deposit)
 
 ### Long-term
 - Reach RCL 8 in starting room
 - Claim and bootstrap a second room
-- Improve hauler routing when storage exists (withdraw from storage, not just containers)
+- Add hauler withdraw from storage when storage exists
+- Add remote hauler to collect dropped energy from remote miners
 
 ## Recent Decisions
 
-- **Rampart placement moved to planner.js** — `defense.js` had a duplicate, inferior placer causing conflicts. `planner.js` now owns all rampart placement with RCL-scaled coverage.
-- **RCL-gated rampart count** — at RCL 2–3 only the spawn is protected; at RCL 4 towers are added; RCL 5+ full coverage. Prevents decay overload before tower capacity exists.
-- **Wall HP target tier table** — replaced linear formula with 10k/50k/150k/300k tiers stored in `cache.getWallTarget()` and shared by both repairer and tower to prevent them working against each other.
-- **Emergency barrier threshold widened to walls** — newly placed walls start at 1 HP and were being ignored by the emergency repair block; the filter now covers both `STRUCTURE_WALL` and `STRUCTURE_RAMPART`.
-- **Unified barrier pool in tower** — walls and ramparts compete by lowest hits only; proximity preference removed. A rampart at 1M HP no longer beats a wall at 10k just because it is nearer the tower. Extracted into `pickWeakestBarrier()` helper used in all three repair passes.
-- **Surplus repair mode** — when all barriers meet the RCL floor and the tower has > 700 energy, it tops barriers toward hitsMax rather than sitting idle.
-- **Checkerboard road parity rolled back** — parity filter was briefly added to road placement but caused gapped roads and weak pathfinder steering. Off-parity roads already placed would take ~57 real days to decay naturally. Reverted; parity correctly scoped to extension/tower layout only.
-- **Hub parity persisted to `mem.parity`** — future modules can read it without recomputing.
-- **Lower REPAIR_RESERVE (400 → 200)** — towers repair more aggressively when idle.
-- **Faster periodic task cadence** — defense every 30t, rebalanceSources every 20t, planner every 5t (all have cheap early-exits so actual CPU cost is low).
-- **Tighter reusePath values** — harvesters/haulers/builders/repairers/upgraders re-path more often to reduce traffic jams; miners stay at 10 (stationary).
-- **Builder site selection uses findClosestByPath** within the top-priority tier to minimize travel between same-priority sites.
-- **Hauler extension delivery uses findClosestByPath** (was findClosestByRange) for accurate routing.
+- **Miner per container** — binding miner to container (not just source) prevents two miners competing for the same tile when a source has multiple containers. `containerId` stamped at spawn bypasses `assignContainer` entirely.
+- **activeMinerCount excludes dying miners** — the pre-spawn race condition was caused by the dying miner keeping `minersForContainer.length === 1`. Filtering by `ticksToLive >= MINER_RESPAWN_TTL` gives a true count of productive miners.
+- **Rebalancer skips miners** — miners own a fixed container and should never drift to a different source mid-life; allowing rebalancing caused incorrect source/container pairing.
+- **Full-capacity spawn wait** — one large creep is more efficient than two small ones on MMO; `bodyCost()` helper added to accurately cost any body array. Income roles bypass to prevent starvation.
+- **Hauler pulls fullest container** — drains the most stocked container first, preventing miner stops when a container overflows while a lighter one is targeted.
+- **Stamp over flood-fill** — deterministic, human-readable placement; footprint validated before hub commitment; easier to audit and tune.
+- **Scout cooldown** — 1500 ticks prevents energy waste when a scout dies far from home; counting by homeRoom correctly tracks scouts in transit.
+- **Upgraders park at RCL 4+** — miners saturate source tiles; upgraders waiting near the controller are more efficient than competing for access.
+- **Tower always fills to 100%** — the 50% threshold was allowing towers to run low during sustained combat; removed to keep defensive capability maximal.
+- **Hauler link detection via getLinkRoles** — `linksBuilt >= 2` failed when two source links existed with no receiver; `getLinkRoles()` distinguishes source vs receiver links correctly.
+- **Emergency guard requires zero harvesters** — the guard was too permissive; it now only fires when all income roles (harvester, miner, hauler) are truly absent.
 
 ## Known Issues / Tech Debt
 
-- `defense.js` is now mostly dead code (all placement logic removed); only `run()` with chokepoint walls remains. Could be folded into planner or deleted if chokepoints are not needed.
-- The `roles/` subdirectory exists but appears unused — may be leftover scaffolding.
-- Repairer container logic avoids source containers unless overflowing (>500); this is correct but the threshold was recently aligned — worth monitoring in-game to confirm repairers are not starved.
-- No CPU profiling across the full creep roster at high RCL — high-CPU warning fires at 18 CPU; bucket is the safety net.
+- `defense.js` is mostly dead code (all placement logic moved to planner); only `run()` with chokepoint walls remains. Candidate for deletion.
+- The `roles/` subdirectory appears unused — legacy scaffold.
+- Remote miner drops energy in place; no remote hauler exists to collect it. Energy is lost unless the remote room is later claimed.
+- No CPU profiling at high RCL with full creep roster — high-CPU warning fires at 18 CPU; bucket is the safety net.
+- Stamp planner hub selection scores by openness + proximity to spawn/sources/controller; the scoring formula may not produce the best hub for every room layout.
 
 ## Next Steps
 
-1. Deploy and verify in-game: walls at 1 HP are rescued by tower emergency pass within a few ticks; surplus mode activates once barriers clear the RCL floor.
-2. Check rebalanceSources at 20t cadence does not cause visible creep churn (source thrashing).
-3. When RCL 5+ is reached, confirm link network is placed and hauler count collapses to 1 as expected.
-4. Begin testing multi-room expansion: scout → claimer pipeline.
-5. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
+1. Deploy to MMO and monitor: verify miner pre-spawn fires correctly; builder count drops to 0 with no sites; hauler count collapses to 1 with link network active.
+2. Set `Memory.remoteRooms = { 'W1N1': ['W2N1'] }` (example) and watch remote miner travel and mine in live game.
+3. At RCL 6, verify mineral harvester spawns and deposits to terminal.
+4. Verify stamp planner hub tile selection on current room — check `Memory.rooms[roomName].hub` is sensible.
+5. Consider adding a remote hauler that collects dropped energy from remote miners and returns it home.
+6. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
