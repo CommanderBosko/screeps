@@ -10,7 +10,7 @@ const roleScout = {
         if (creep.memory.targetRoom) {
             creep.moveTo(new RoomPosition(25, 25, creep.memory.targetRoom), {
                 visualizePathStyle: { stroke: '#00ff88' },
-                reusePath: 50
+                reusePath: 5
             });
         }
         creep.say('🔍');

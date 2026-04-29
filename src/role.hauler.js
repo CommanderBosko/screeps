@@ -16,13 +16,31 @@ const roleHauler = {
             const target = roleHauler.getDeliveryTarget(creep);
             if (target) {
                 if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 2 });
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 10 });
                 }
                 creep.say('🚚');
             } else {
-                // Nothing to fill — park near spawn to be useful for renewal
+                // Nothing to fill right now — top up store if possible, then park near spawn.
+
+                // Step 1: if we have room, grab from the fullest container so we're
+                // ready to deliver the instant a spawn/extension becomes available.
+                if (creep.store.getFreeCapacity() > 0) {
+                    const containers = cache.find(creep.room, FIND_STRUCTURES)
+                        .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
+                    if (containers.length > 0) {
+                        const src = containers.reduce((a, b) =>
+                            a.store[RESOURCE_ENERGY] >= b.store[RESOURCE_ENERGY] ? a : b);
+                        if (creep.withdraw(src, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(src, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                        }
+                        creep.say('🔋');
+                        return;
+                    }
+                }
+
+                // Step 2: full (or nothing to pull from) — park at range 1 of spawn.
                 const spawns = cache.find(creep.room, FIND_MY_SPAWNS);
-                if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 2)) {
+                if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 1)) {
                     creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#aaaaaa' }, reusePath: 5 });
                 }
                 creep.say('💤');
@@ -38,7 +56,7 @@ const roleHauler = {
         if (readyReceivers.length > 0) {
             const target = creep.pos.findClosestByRange(readyReceivers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 2 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 10 });
             }
             creep.say('🔗');
             return;
@@ -48,9 +66,10 @@ const roleHauler = {
         const containers = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
         if (containers.length > 0) {
-            const target = creep.pos.findClosestByPath(containers);
+            const target = containers.reduce((a, b) =>
+                a.store[RESOURCE_ENERGY] >= b.store[RESOURCE_ENERGY] ? a : b);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 2 });
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
             }
             creep.say('📦');
             return;
@@ -77,7 +96,7 @@ const roleHauler = {
         // Priority 3: towers (defensive capability)
         const towers = myStructs.filter(s =>
             s.structureType === STRUCTURE_TOWER &&
-            s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.5
+            s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
         );
         if (towers.length > 0) return creep.pos.findClosestByRange(towers);
 

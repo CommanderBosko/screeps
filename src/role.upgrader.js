@@ -88,7 +88,19 @@ const roleUpgrader = {
         // Don't compete with harvesters for source access when spawn is low
         if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5) return;
 
-        // Last resort: mine directly
+        // At RCL 4+ miners own the sources — upgraders must not compete for source tiles.
+        // Instead, park near the controller and wait for energy to arrive via links/containers.
+        const rcl = creep.room.controller ? creep.room.controller.level : 0;
+        if (rcl >= 4) {
+            const ctrl = creep.room.controller;
+            if (ctrl && !creep.pos.inRangeTo(ctrl, 3)) {
+                creep.moveTo(ctrl, { visualizePathStyle: { stroke: '#aa00ff' }, reusePath: 3 });
+            }
+            creep.say('⏳');
+            return;
+        }
+
+        // Last resort: mine directly (RCL 1-3 only, before miners exist)
         if (!creep.memory.sourceId) cache.assignSource(creep);
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) return;

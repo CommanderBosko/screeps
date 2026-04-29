@@ -11,6 +11,16 @@ const roleMiner = {
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) return;
 
+        // Invalidate containerId if it no longer belongs to the assigned source
+        // (can happen when rebalanceSources switches sourceId mid-life).
+        if (creep.memory.containerId) {
+            const existing = Game.getObjectById(creep.memory.containerId);
+            if (!existing || !existing.pos.inRangeTo(source.pos, 1)) {
+                creep.memory.containerId = null;
+                roleMiner.assignContainer(creep);
+            }
+        }
+
         const container = Game.getObjectById(creep.memory.containerId);
 
         // Move to container position first — stationary mining is most efficient
@@ -60,6 +70,8 @@ const roleMiner = {
     },
 
     assignContainer: function (creep) {
+        // If containerId was set at spawn time, honour it — skip the search.
+        if (creep.memory.containerId) return;
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) return;
         const nearby = source.pos.findInRange(FIND_STRUCTURES, 1, {

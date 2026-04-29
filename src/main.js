@@ -9,6 +9,8 @@ const roleScout = require('role.scout');
 const rolePioneer = require('role.pioneer');
 const roleAttacker = require('role.attacker');
 const roleHauler = require('role.hauler');
+const roleRemoteMiner = require('role.remoteMiner');
+const roleMineralHarvester = require('role.mineralHarvester');
 const towerLogic = require('role.tower');
 const defense = require('defense');
 const cache = require('cache');
@@ -43,6 +45,8 @@ const ROLE_MAP = {
     'pioneer': rolePioneer,
     'attacker': roleAttacker,
     'hauler': roleHauler,
+    'remoteMiner': roleRemoteMiner,
+    'mineralHarvester': roleMineralHarvester,
 };
 
 function setRoles() {
@@ -225,6 +229,8 @@ function rebalanceSources(room) {
     for (const name in Game.creeps) {
         const c = Game.creeps[name];
         if (c.memory.homeRoom !== room.name) continue;
+        // Miners own their specific container and must never be rebalanced — skip them.
+        if (c.memory.role === 'miner') continue;
         if (c.memory.sourceId && bucket[c.memory.sourceId] !== undefined) {
             bucket[c.memory.sourceId].push(c);
         }
@@ -251,15 +257,19 @@ const MINER_RESPAWN_TTL = 75;
 const RENEW_AT_TTL = 400;
 
 // Renew adjacent creeps with low TTL when a spawn would otherwise be idle.
-// Haulers and harvesters already visit spawns during normal delivery, so this
-// costs nothing extra — they just stay a tick longer and gain back ~100 ticks
-// for ~67 energy (9-part body). Prioritise the most urgent creep.
+// At RCL 1-3: renew any role (harvesters are hard to replace).
+// At RCL 4+: only renew haulers (already parked adjacent to spawn when idle).
 function renewCreeps() {
     for (const spawnName in Game.spawns) {
         const spawn = Game.spawns[spawnName];
         if (spawn.spawning) continue;
+        const rcl = spawn.room.controller ? spawn.room.controller.level : 1;
         const candidates = spawn.pos.findInRange(FIND_MY_CREEPS, 1)
-            .filter(c => c.ticksToLive && c.ticksToLive < RENEW_AT_TTL);
+            .filter(c => {
+                if (!c.ticksToLive || c.ticksToLive >= RENEW_AT_TTL) return false;
+                if (rcl >= 4 && c.memory.role !== 'hauler') return false;
+                return true;
+            });
         if (candidates.length === 0) continue;
         candidates.sort((a, b) => a.ticksToLive - b.ticksToLive);
         spawn.renewCreep(candidates[0]);
@@ -306,36 +316,52 @@ function spawnForRoom(spawn) {
         });
         return;
     }
-    if (rcl >= 4 && roomCreeps('miner', rn) === 0 && roomCreeps('hauler', rn) === 0 && room.energyAvailable >= 200) {
+    if (rcl >= 4 && roomCreeps('miner', rn) === 0 && roomCreeps('hauler', rn) === 0 && roomCreeps('harvester', rn) === 0 && room.energyAvailable >= 200) {
         spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
             memory: { role: 'harvester', homeRoom: rn }
         });
         return;
     }
 
-    // Miners — one per source with adjacent container; pre-spawn when current miner is nearly dead.
+    // Miners — one per container adjacent to a source; pre-spawn when current miner is nearly dead.
     // Only at RCL 4+ where haulers can also exist; harvesters cover RCL 1-3.
+    // Each miner is assigned both sourceId and containerId at spawn so it parks on its exact container.
     if (rcl >= 4) for (const source of roomSources) {
-        const hasContainer = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        const sourceContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
             filter: s => s.structureType === STRUCTURE_CONTAINER
-        }).length > 0;
-        if (!hasContainer) continue;
-        const minersForSource = _.filter(Game.creeps, c =>
-            c.memory.role === 'miner' && c.memory.sourceId === source.id
-        );
-        const dyingMiner = minersForSource.find(c => c.ticksToLive < MINER_RESPAWN_TTL);
-        const needsMiner = minersForSource.length === 0 || dyingMiner;
-        // Don't spawn a miner unless a hauler already exists or the room can afford one.
-        // A miner with no hauler will clog its container/receiver link and stop producing.
-        const haulerReady = roomCreeps('hauler', rn) > 0 || room.energyAvailable >= 150;
-        if (needsMiner && haulerReady && minersForSource.length < 2 && room.energyAvailable >= 150) {
-            // Use energyCapacityAvailable so miner body scales with room, but cap at current energy.
-            // Minimum body [WORK,MOVE]=150; don't spawn below that.
-            const minerEnergy = Math.min(room.energyCapacityAvailable, room.energyAvailable);
-            spawn.spawnCreep(getBody('miner', minerEnergy), 'Miner' + Game.time, {
-                memory: { role: 'miner', sourceId: source.id, homeRoom: rn }
-            });
-            return;
+        });
+        for (const container of sourceContainers) {
+            const minersForContainer = _.filter(Game.creeps, c =>
+                c.memory.role === 'miner' && c.memory.containerId === container.id
+            );
+            const dyingMiner = minersForContainer.find(c => c.ticksToLive < MINER_RESPAWN_TTL);
+            const needsMiner = minersForContainer.length === 0 || dyingMiner;
+            // Don't spawn a miner unless a hauler already exists or the room can afford one.
+            // A miner with no hauler will clog its container/receiver link and stop producing.
+            const haulerReady = roomCreeps('hauler', rn) > 0 || room.energyAvailable >= 150;
+            // Only count miners that are not about to die — prevents the race where a dying
+            // miner blocks spawning its replacement because minersForContainer.length is still 1.
+            const activeMinerCount = minersForContainer.filter(c => !c.ticksToLive || c.ticksToLive >= MINER_RESPAWN_TTL).length;
+            if (needsMiner && haulerReady && activeMinerCount < 1 && room.energyAvailable >= 150) {
+                // Compute the max-capacity miner body and its cost.
+                const targetMinerBody = getBody('miner', room.energyCapacityAvailable);
+                const targetMinerCost = bodyCost(targetMinerBody);
+                // Wait for full-capacity energy unless this source has NO active miner
+                // (activeMinerCount === 0 and dyingMiner is undefined = true zero-coverage).
+                // If a dying miner is still alive (dyingMiner set), wait for the best body
+                // because the dying miner still covers income for now.
+                // If there is truly no miner at all, spawn immediately at whatever energy
+                // is available to avoid a source going idle.
+                const trueZeroCoverage = minersForContainer.length === 0;
+                if (!trueZeroCoverage && room.energyAvailable < targetMinerCost) return;
+                const minerEnergy = trueZeroCoverage
+                    ? Math.min(room.energyCapacityAvailable, room.energyAvailable)
+                    : room.energyCapacityAvailable;
+                spawn.spawnCreep(getBody('miner', minerEnergy), 'Miner' + Game.time, {
+                    memory: { role: 'miner', sourceId: source.id, containerId: container.id, homeRoom: rn }
+                });
+                return;
+            }
         }
     }
 
@@ -351,9 +377,12 @@ function spawnForRoom(spawn) {
         const sourcesWithContainer = roomSources.filter(s =>
             s.pos.findInRange(FIND_STRUCTURES, 1, { filter: t => t.structureType === STRUCTURE_CONTAINER }).length > 0
         ).length;
-        const linksBuilt = roomMyStructs.filter(s => s.structureType === STRUCTURE_LINK).length;
-        // With ≥2 links (receiver + ≥1 source), one hauler drains the receiver near spawn
-        const haulerMax = linksBuilt >= 2 ? 1 : sourcesWithContainer;
+        // Only collapse to 1 hauler when the link network is actually operational:
+        // requires at least one source link AND at least one receiver link (near spawn/storage).
+        // linksBuilt >= 2 is insufficient — two source links with no receiver = no energy transfer.
+        const { srcLinks, receiverLinks } = cache.getLinkRoles(room);
+        const linkNetworkOperational = srcLinks.length >= 1 && receiverLinks.length >= 1;
+        const haulerMax = linkNetworkOperational ? 1 : sourcesWithContainer;
         if (haulerMax > 0 && roomCreeps('hauler', rn) < haulerMax && room.energyAvailable >= 150) {
             spawnStandard(spawn, 'hauler', rn);
             return;
@@ -396,12 +425,64 @@ function spawnForRoom(spawn) {
         }
     }
 
+    // Remote Miners — RCL 4+ with storage, targeting rooms in Memory.remoteRooms[roomName]
+    if (rcl >= 4 && room.storage && Memory.remoteRooms && Memory.remoteRooms[rn] && Memory.remoteRooms[rn].length > 0) {
+        const remoteRoomList = Memory.remoteRooms[rn];
+        for (let i = 0; i < remoteRoomList.length; i++) {
+            const remoteRoomName = remoteRoomList[i];
+            // Count remote miners assigned to this specific remote room
+            const minersForRemote = _.filter(Game.creeps, c =>
+                c.memory.role === 'remoteMiner' &&
+                c.memory.homeRoom === rn &&
+                c.memory.targetRoom === remoteRoomName
+            ).length;
+            if (minersForRemote < 2 && room.energyAvailable >= 200) {
+                // Scale body: prioritize WORK parts for maximum mining throughput
+                let remoteMinerBody;
+                const re = room.energyAvailable;
+                if (re >= 700)      remoteMinerBody = [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];  // 4W+1C+3M = 700
+                else if (re >= 550) remoteMinerBody = [WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];        // 3W+1C+3M = 550
+                else if (re >= 400) remoteMinerBody = [WORK, WORK, CARRY, MOVE, MOVE];                    // 2W+1C+2M = 400
+                else                remoteMinerBody = [WORK, CARRY, MOVE, MOVE];                          // 1W+1C+2M = 200
+                // Assign source index round-robin based on miner slot
+                const sourceIdx = minersForRemote % 2;
+                spawn.spawnCreep(remoteMinerBody, 'RemoteMiner' + Game.time, {
+                    memory: { role: 'remoteMiner', targetRoom: remoteRoomName, sourceIdx, homeRoom: rn }
+                });
+                return;
+            }
+        }
+    }
+
+    // Mineral Harvesters — RCL 6+, one per room, only when extractor + mineral exist
+    if (rcl >= 6) {
+        const extractors = roomMyStructs.filter(s => s.structureType === STRUCTURE_EXTRACTOR);
+        if (extractors.length > 0) {
+            const minerals = room.find(FIND_MINERALS);
+            const hasMineral = minerals.length > 0 && minerals[0].mineralAmount > 0;
+            if (hasMineral && roomCreeps('mineralHarvester', rn) < 1) {
+                const mineralBody = [WORK, WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE]; // 5W+2C+3M = 850
+                if (room.energyAvailable >= 850) {
+                    spawn.spawnCreep(mineralBody, 'MineralHarvester' + Game.time, {
+                        memory: { role: 'mineralHarvester', homeRoom: rn }
+                    });
+                    return;
+                }
+            }
+        }
+    }
+
     // Standard roles — 2 each per room
     const hasTower = roomMyStructs.some(s => s.structureType === STRUCTURE_TOWER);
+    // Gate builders on whether construction sites actually exist — idle builders waste energy.
+    const constructionSites = room.find(FIND_CONSTRUCTION_SITES);
+    const builderMax = constructionSites.length > 0 ? 2 : 0;
     // Upgraders scale with RCL: more at mid RCL where upgrading matters most.
     // At RCL 8 only 1 upgrader needed (GCL gains tiny, just keep controller alive).
-    const upgraderMax = rcl >= 8 ? 1 : (rcl >= 6 ? 2 : (rcl >= 4 ? 4 : 3));
-    for (const [role, max] of [['builder', 2], ['upgrader', upgraderMax], ['repairer', hasTower ? 0 : 1]]) {
+    const upgraderMax = rcl >= 8 ? 1 : (rcl >= 6 ? 3 : 2);
+    // GCL farming mode at RCL 8 — bump to 5 when storage is flush with energy.
+    const upgraderMaxFinal = (rcl === 8 && room.storage && room.storage.store[RESOURCE_ENERGY] > 100000) ? 5 : upgraderMax;
+    for (const [role, max] of [['builder', builderMax], ['upgrader', upgraderMaxFinal], ['repairer', hasTower ? 0 : 1]]) {
         if (roomCreeps(role, rn) < max && room.energyAvailable >= 200) {
             spawnStandard(spawn, role, rn);
             return;
@@ -409,9 +490,14 @@ function spawnForRoom(spawn) {
     }
 
     // Scout — only when we have GCL headroom and are ready to expand (RCL 4+)
+    // 1500 tick cooldown between scouts so we don't spam-replace a scout dying far from home
     const ownedRoomCount = Object.values(Game.rooms).filter(r => r.controller && r.controller.my).length;
     const readyToExpand = rcl >= 4 && Game.gcl.level > ownedRoomCount;
-    if (readyToExpand && roomCreeps('scout', rn) === 0 && room.energyAvailable >= 50) {
+    const scoutsForRoom = _.filter(Game.creeps, c => c.memory.role === 'scout' && c.memory.homeRoom === rn).length;
+    const roomMem = Memory.rooms[rn] || (Memory.rooms[rn] = {});
+    const lastScout = roomMem.lastScoutSpawn || 0;
+    if (readyToExpand && scoutsForRoom === 0 && Game.time - lastScout > 1500 && room.energyAvailable >= 50) {
+        roomMem.lastScoutSpawn = Game.time;
         spawn.spawnCreep([MOVE], 'Scout' + Game.time, { memory: { role: 'scout', homeRoom: rn } });
         return;
     }
@@ -425,6 +511,23 @@ function spawnForRoom(spawn) {
             });
         }
     }
+}
+
+const PART_COSTS = {
+    [WORK]: 100,
+    [CARRY]: 50,
+    [MOVE]: 50,
+    [ATTACK]: 80,
+    [RANGED_ATTACK]: 150,
+    [HEAL]: 250,
+    [CLAIM]: 600,
+    [TOUGH]: 10,
+};
+
+function bodyCost(body) {
+    let total = 0;
+    for (let i = 0; i < body.length; i++) total += PART_COSTS[body[i]] || 0;
+    return total;
 }
 
 function getBody(role, energy) {
@@ -528,23 +631,28 @@ const SPAWN_BUFFER = 300;
 const INCOME_ROLES = new Set(['harvester', 'miner', 'hauler']);
 
 function spawnStandard(spawn, role, homeRoom) {
+    const room = spawn.room;
+
+    // Determine the target body — the best body this room can ever produce at full capacity.
+    // For non-income roles, apply the SPAWN_BUFFER cap so we don't drain below emergency threshold.
+    const targetCapBudget = INCOME_ROLES.has(role)
+        ? room.energyCapacityAvailable
+        : Math.max(200, room.energyCapacityAvailable - SPAWN_BUFFER);
+    const targetBody = getBody(role, targetCapBudget);
+    const targetCost = bodyCost(targetBody);
+
+    // Wait for full-capacity energy unless we already have enough.
+    // This ensures one large creep rather than two small ones — larger bodies are
+    // always more efficient per-energy-spent on the MMO server.
+    if (room.energyAvailable < targetCost) return;
+
     const name = role.charAt(0).toUpperCase() + role.slice(1) + Game.time;
     const memory = { role, homeRoom };
     if (ROLES_NEEDING_SOURCE.has(role)) {
-        const sourceId = cache.pickSource(spawn.room);
+        const sourceId = cache.pickSource(room);
         if (sourceId) memory.sourceId = sourceId;
     }
-    const room = spawn.room;
-    // Income-critical roles (harvester/miner/hauler) scale to full capacity so they
-    // stay as productive as the room can afford.
-    // Upgraders/builders are capped at (energyAvailable - SPAWN_BUFFER) so we always
-    // keep 300 energy in reserve for an emergency respawn — preventing the death spiral
-    // where saving up for a big upgrader body leaves the spawn unable to replace dead harvesters.
-    const rawBudget = Math.min(room.energyCapacityAvailable, room.energyAvailable);
-    const energyBudget = INCOME_ROLES.has(role)
-        ? rawBudget
-        : Math.max(200, room.energyAvailable - SPAWN_BUFFER);
-    spawn.spawnCreep(getBody(role, energyBudget), name, { memory });
+    spawn.spawnCreep(targetBody, name, { memory });
 }
 
 module.exports.loop = function () {
