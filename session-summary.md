@@ -4,6 +4,85 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-04-29 — Repairer Barrier Overhaul, Ranged Defender, Hauler Pinning
+
+**Duration Estimate**: Single focused session
+**Session Focus**: Overhaul the repairer to bring walls and ramparts to full maxHits with persistent targeting, fix barrier repair queue priority, add a ranged defender variant for healer squads, simplify tower repair, and refine hauler container pinning.
+
+### What Was Accomplished
+
+**Repairer overhaul (`role.repairer.js`):**
+- Repairer now targets walls and ramparts to full `hitsMax` (not an HP floor) when a tower is present
+- Barrier priority fixed: with a tower, walls/ramparts rank above containers and roads in the repair queue (containers were draining the repairer's energy while barriers degraded)
+- Persistent `repairTarget` in `creep.memory`: repairer commits its full energy load to one barrier before picking the next; sort runs only on target selection, `Game.getObjectById` O(1) lookup each tick
+- `hasWork()` helper: prevents the repairer from harvesting when there is genuinely nothing to repair; idle repairer dumps carried energy to storage and says 💤
+- Fixed `creep.say()` outputting the word "brick" instead of the 🧱 emoji
+- Without a tower, repairer still handles roads/containers only (no barrier work)
+
+**Defender hardening (`role.defender.js`, `main.js`):**
+- Ranged defender variant spawned when hostiles include a HEAL-part creep; uses `rangedAttack()`, falls back to `rangedMassAttack()` when multiple hostiles in range 3
+- Melee defender now holds rampart position: attacks in range 1, advances to the nearest rampart closer to the target rather than charging in the open
+- Retreat: when below 40% HP and not on a rampart, defender flees to the closest rampart
+- Idle rally: defenders move to the closest rampart (not just near spawn)
+- Body scaling for both `defender` and `defender-ranged` added to `getBody()` switch; emergency minimum-viable-defender uses ranged body when possible and healers are present
+
+**Tower simplification (`role.tower.js`):**
+- Tower no longer repairs walls or ramparts beyond emergency (< 500 HP); wall/rampart upkeep fully delegated to repairer
+- Removed `REPAIR_RESERVE`, `SURPLUS_THRESHOLD`, `pickWeakestBarrier()`
+- Non-barrier repair sorted by hit % (most degraded first)
+- Repairer always spawns (max=1) regardless of tower presence (removed `hasTower ? 0 : 1` gating)
+
+**Hauler refinements (`role.hauler.js`):**
+- Delivery flip threshold lowered from 100% to 50% store capacity; haulers start delivering sooner
+- `pickContainer()` helper: prefers closest container when all are >= 80% full; otherwise fullest
+- Container-pinned mode: when `containerId` is set, withdraw only from that container; wait near it when empty rather than roaming
+- Opportunistic pickup capped at range 5 (was unlimited)
+
+**Cache and upgrader (`cache.js`, `role.upgrader.js`):**
+- `pickupNearby()` accepts optional `maxRange` parameter; callers now pass 5
+- Upgrader container pool falls back to source containers when no non-source containers are available (prevents stalling when only source containers have energy)
+- Upgrader opportunistic pickup capped at range 5
+
+### Files Changed
+
+- `src/role.repairer.js` — barrier-to-maxHits logic, persistent repairTarget, hasWork() helper, priority fix, emoji fix
+- `src/role.defender.js` — ranged variant, rampart-hold tactic, retreat logic, rally to rampart
+- `src/main.js` — ranged defender spawn, emergency body selection, hauler per-container spawn pinning, repairer always-spawn (max=1), defender/defender-ranged bodies in getBody()
+- `src/role.hauler.js` — 50% delivery flip, pickContainer() helper, container-pinned withdraw mode, pickup range 5
+- `src/role.tower.js` — removed barrier maintenance passes, simplified to emergency + non-barrier repair only
+- `src/cache.js` — pickupNearby() maxRange parameter
+- `src/role.upgrader.js` — container pool fallback to source containers, pickup range 5
+
+### Commits This Session
+
+- `128b92a` — Repairer barrier overhaul, ranged defender, hauler per-container pinning, tower simplification
+
+### Decisions Made
+
+- **Repairer targets barriers to maxHits** — the HP-floor approach left walls far below their structural maximum; with a tower managing non-barrier upkeep, the repairer can commit entirely to raising barriers.
+- **Persistent repairTarget** — re-sorting walls (up to 300M maxHits each) every tick is wasteful; locking onto one target per energy load is O(1) after selection and prevents the repairer oscillating between walls.
+- **Barriers before containers** — tower already handles container upkeep when idle; repairer should handle what the tower cannot raise high enough.
+- **Tower delegates walls/ramparts to repairer** — tower repair passes for barriers beyond emergency were removed; a dedicated repairer with persistent targeting is more effective than scattered tower pulses.
+- **Ranged defender for healer squads** — melee defenders cannot out-DPS a healer repairing the attacker; ranged attack bypasses this by dealing consistent damage from distance.
+- **Rampart-hold tactic** — holding position on a rampart and waiting for range-1 contact is more efficient than charging; rampart provides structural protection.
+- **50% hauler delivery flip** — prevents extensions starving while haulers sit at containers filling to 100%.
+- **Pickup range 5** — unlimited radius caused haulers and upgraders to roam for small drops; range 5 keeps behavior local.
+
+### Issues Encountered
+
+- Containers were ahead of barriers in the repair priority queue, causing the repairer to cycle between containers while walls sat at low HP. Fixed by restructuring the `doRepair()` conditional tree.
+- `creep.say('brick')` was a string literal instead of the emoji character `'🧱'`.
+
+### Remaining / Next Session
+
+- Deploy to MMO and watch repairer commit to one wall per energy load; confirm barriers trend toward maxHits over multiple sessions
+- Observe ranged defender engaging a healer-accompanied raid
+- Verify miner pre-spawn, builder count gating, hauler link collapse (carry-over from 2026-04-28)
+- Test remote miner by configuring `Memory.remoteRooms` manually
+- At RCL 6, verify mineral harvester spawns and deposits correctly
+
+---
+
 ## Session: 2026-04-28 — Economy Hardening, Stamp Planner Rewrite, Remote/Mineral Roles
 
 **Duration Estimate**: Multi-hour session (22 discrete changes)
