@@ -4,6 +4,8 @@
 //
 // Memory: { role: 'mineralHarvester', homeRoom: roomName }
 
+const cache = require('cache');
+
 const roleMineralHarvester = {
     run: function (creep) {
         // Flip state on empty/full
@@ -25,9 +27,8 @@ const roleMineralHarvester = {
         const room = creep.room;
 
         // Find extractor
-        const extractors = room.find(FIND_MY_STRUCTURES, {
-            filter: s => s.structureType === STRUCTURE_EXTRACTOR
-        });
+        const extractors = cache.find(room, FIND_MY_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_EXTRACTOR);
         if (extractors.length === 0) {
             creep.say('no ext');
             return;
@@ -35,7 +36,7 @@ const roleMineralHarvester = {
         const extractor = extractors[0];
 
         // Find mineral
-        const minerals = room.find(FIND_MINERALS);
+        const minerals = cache.find(room, FIND_MINERALS);
         if (minerals.length === 0) {
             creep.say('no min');
             return;

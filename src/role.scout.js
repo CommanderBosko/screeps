@@ -19,8 +19,9 @@ const roleScout = {
     recordRoom: function (room) {
         if (!Memory.scoutData) Memory.scoutData = {};
         const ctrl = room.controller;
-        const towers = room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_TOWER });
-        const spawns = room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_SPAWN });
+        const allStructures = room.find(FIND_STRUCTURES);
+        const towers = allStructures.filter(s => s.structureType === STRUCTURE_TOWER);
+        const spawns = allStructures.filter(s => s.structureType === STRUCTURE_SPAWN);
         Memory.scoutData[room.name] = {
             sources: room.find(FIND_SOURCES).length,
             owner: ctrl && ctrl.owner ? ctrl.owner.username : null,

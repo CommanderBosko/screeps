@@ -1,3 +1,5 @@
+const cache = require('cache');
+
 // ─── RCL-gated structure count limits ─────────────────────────────────────
 const EXTENSION_LIMITS  = [0, 0, 5, 10, 20, 30, 40, 50, 60];
 const TOWER_LIMITS      = [0, 0, 0,  1,  1,  2,  2,  3,  6];
@@ -244,8 +246,8 @@ function findHub(room, dist) {
 
 // ─── Count built + planned structures of a given type ─────────────────────
 function countType(room, structureType) {
-    const built = room.find(FIND_MY_STRUCTURES, { filter: s => s.structureType === structureType }).length;
-    const sites = room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.structureType === structureType }).length;
+    const built = cache.find(room, FIND_MY_STRUCTURES).filter(s => s.structureType === structureType).length;
+    const sites = cache.find(room, FIND_CONSTRUCTION_SITES).filter(s => s.structureType === structureType).length;
     return built + sites;
 }
 
@@ -496,14 +498,14 @@ function placeRoads(room, hub) {
     }
 
     const ctrl = room.controller;
+    const sources = room.find(FIND_SOURCES);
     const targets = [
-        ...room.find(FIND_SOURCES).map(s => s.pos),
+        ...sources.map(s => s.pos),
         ctrl ? ctrl.pos : null,
         new RoomPosition(hub.x, hub.y, room.name),
         room.storage ? room.storage.pos : null,
     ].filter(Boolean);
 
-    const sources = room.find(FIND_SOURCES);
     for (const target of targets) {
         const result = PathFinder.search(
             spawn.pos,
@@ -585,7 +587,7 @@ function needsReplanning(room, rcl, mem) {
     if (towerTarget > 0 && countType(room, STRUCTURE_TOWER) < towerTarget) return true;
 
     // Containers: one per source + one near controller at RCL 3+
-    const sourceCount = room.find(FIND_SOURCES).length;
+    const sourceCount = cache.find(room, FIND_SOURCES).length;
     const containerCount = countType(room, STRUCTURE_CONTAINER);
     const expectedContainers = rcl >= 3 ? sourceCount + 1 : sourceCount;
     if (containerCount < expectedContainers) return true;
@@ -596,20 +598,21 @@ function needsReplanning(room, rcl, mem) {
 
     // Ramparts: compare against RCL-scaled target set
     if (rcl >= 2) {
+        const myStructsCached = cache.find(room, FIND_MY_STRUCTURES);
+        const allStructsCached = cache.find(room, FIND_STRUCTURES);
         let rampartTarget = 0;
         if (rcl < 4) {
-            rampartTarget = room.find(FIND_MY_SPAWNS).length;
+            rampartTarget = myStructsCached.filter(s => s.structureType === STRUCTURE_SPAWN).length;
         } else if (rcl < 5) {
-            rampartTarget = room.find(FIND_MY_SPAWNS).length +
-                room.find(FIND_MY_STRUCTURES, { filter: s => s.structureType === STRUCTURE_TOWER }).length;
+            rampartTarget = myStructsCached.filter(s => s.structureType === STRUCTURE_SPAWN).length +
+                myStructsCached.filter(s => s.structureType === STRUCTURE_TOWER).length;
         } else {
             const structTypes = [
                 STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
                 STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
             ];
-            rampartTarget = room.find(FIND_STRUCTURES, {
-                filter: s => structTypes.includes(s.structureType)
-            }).length + (room.controller ? 1 : 0);
+            rampartTarget = allStructsCached.filter(s => structTypes.includes(s.structureType)).length +
+                (room.controller ? 1 : 0);
         }
         if (countType(room, STRUCTURE_RAMPART) < rampartTarget) return true;
     }

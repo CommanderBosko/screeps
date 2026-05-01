@@ -34,8 +34,7 @@ const roleHauler = {
         if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.delivering = false;
         }
-        if (!creep.memory.delivering &&
-            creep.store[RESOURCE_ENERGY] >= creep.store.getCapacity() * 0.5) {
+        if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
             creep.memory.delivering = true;
         }
 

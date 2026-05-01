@@ -41,17 +41,18 @@ const roleRemoteMiner = {
         if (!source) source = sources[sourceIdx] || sources[0];
         if (!source) return;
 
+        // Drop energy when full before attempting to harvest — no carry infrastructure in remote rooms
+        if (creep.store.getFreeCapacity() === 0) {
+            creep.drop(RESOURCE_ENERGY);
+            return;
+        }
+
         const result = creep.harvest(source);
         if (result === ERR_NOT_IN_RANGE) {
             creep.moveTo(source, { visualizePathStyle: { stroke: '#ff6600' }, reusePath: 20 });
             creep.say('⛏️');
         } else if (result === OK) {
             creep.say('⛏️');
-        }
-
-        // Drop energy when full — no carry infrastructure in remote rooms
-        if (creep.store.getFreeCapacity() === 0) {
-            creep.drop(RESOURCE_ENERGY);
         }
     }
 };

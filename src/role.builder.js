@@ -141,11 +141,11 @@ const roleBuilder = {
             return;
         }
 
-        // Source containers as last resort before mining
+        // Source containers as last resort before mining (tap any non-empty container)
         const srcContainers = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s =>
                 s.structureType === STRUCTURE_CONTAINER &&
-                s.store[RESOURCE_ENERGY] > 500
+                s.store[RESOURCE_ENERGY] > 0
             );
         if (srcContainers.length > 0) {
             const target = creep.pos.findClosestByRange(srcContainers);

@@ -63,7 +63,8 @@ const roleMiner = {
         const sources = cache.find(creep.room, FIND_SOURCES);
         if (sources.length === 0) return;
         const takenIds = Object.values(Game.creeps)
-            .filter(c => c.memory.role === 'miner' && c.id !== creep.id)
+            .filter(c => c.memory.role === 'miner' && c.id !== creep.id &&
+                         c.memory.homeRoom === creep.memory.homeRoom)
             .map(c => c.memory.sourceId);
         const free = sources.find(s => !takenIds.includes(s.id));
         creep.memory.sourceId = (free || sources[0]).id;
