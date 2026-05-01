@@ -4,7 +4,7 @@ A Screeps MMO bot written in plain JavaScript. The bot automates a full colony l
 
 ## Current Status
 
-Active development — mid-game systems stable and defensively hardened. Bot progresses through RCL 1–5+ reliably. Recent sessions focused on economic correctness bugs at RCL 4+, a repairer overhaul to bring walls/ramparts to full HP, and a ranged defender variant for healer-accompanied raids.
+Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5+ reliably. Recent sessions focused on RCL-tiered barrier HP caps, demand-based repairer spawning, storage-scaled upgrader counts, hauler over-spawn fixes, and a 15-fix audit sweep across economy, defense, and CPU efficiency.
 
 ## Features
 
@@ -14,7 +14,9 @@ Active development — mid-game systems stable and defensively hardened. Bot pro
 - Link network (RCL 5+): source links transfer energy instantly to receiver link near spawn/storage; hauler count collapses to 1 when `srcLinks >= 1 && receiverLinks >= 1`
 - Hauler picks fullest container (max energy reduce) rather than closest; idles by topping up store and parking at spawn
 - Energy body scaling: all roles wait for full-capacity body before spawning (income-critical roles bypass wait)
-- Builders only spawn when construction sites exist; upgrader count corrected to `rcl>=6?3:2`; GCL farming at RCL 8 (5 upgraders when storage > 100k)
+- Builders only spawn when construction sites exist
+- Upgrader count scales with storage energy via `desiredUpgraders()`: no storage → 2; <50k → 1; <150k → 2; <300k → 3; 300k+ → 4
+- Upgrader bodies scale from 1W (200e) up to 12W (1500e); top tier is RCL-8-safe (12W < 15W controller upgrade cap)
 - Opportunistic creep renewal: idle spawns renew nearby haulers (RCL 4+) or any role (RCL 1–3) with TTL < 400
 - Remote miner role: travels to rooms listed in `Memory.remoteRooms`, mines safe sources (SK-room aware), drops energy
 - Mineral harvester role: RCL 6+, one per room with extractor, deposits to terminal then storage
@@ -29,19 +31,20 @@ Active development — mid-game systems stable and defensively hardened. Bot pro
 
 **Defense**
 - Towers attack hostiles (attackers prioritized), heal wounded creeps, emergency-repair dying ramparts (< 500 HP), repair non-barrier structures (roads, containers); wall/rampart upkeep fully delegated to the repairer
-- Repairer brings walls and ramparts to full `hitsMax` when a tower is present; barriers take priority over roads/containers in the repair queue; persistent `repairTarget` in memory commits full energy load to one barrier before re-targeting (O(1) lookup via `Game.getObjectById`)
-- Without a tower, repairer handles only roads, containers, and other non-barrier structures
+- Repairer raises barriers to RCL-tiered caps via `barrierCap(rcl)`: 10k/50k/200k/1M/5M at RCL 1–3/4–5/6/7/8 (not hitsMax); persistent `repairTarget` commits full energy load to one barrier per cycle
+- Repairer only spawns when actual repair demand exists: emergency rampart (< 500 HP), barriers below cap, or non-barrier damage when no tower has energy
+- Without an energized tower, repairer handles roads, containers, and other non-barrier structures
 - `hasWork()` helper prevents repairer from harvesting when nothing needs repair; idle repairer dumps energy to storage
-- Repairer always spawns (max=1) regardless of tower presence
 - Defenders: melee variant holds rampart position and retreats to ramparts below 40% HP; ranged variant spawned when hostiles include HEAL parts — uses `rangedAttack()`/`rangedMassAttack()` from rampart cover
 - Safe-mode auto-activation when hostile combat creeps are present and towers are low on energy
 
 **Spawn Logic**
-- Priority order: defenders (reactive, melee or ranged based on hostile body) → emergency harvester → miners → harvesters (RCL 1–3) → haulers → pioneers → attackers → remote miners → mineral harvesters → builders → upgraders → repairers → scout → claimer
-- Upgrader count: 2 at RCL 1–5, 3 at RCL 6–7, 1 at RCL 8 (GCL farming: 5 when storage > 100k)
+- Priority order: defenders (reactive, melee or ranged based on hostile body) → emergency miner/harvester → miners → harvesters (RCL 1–3) → haulers → pioneers → attackers → remote miners → mineral harvesters → builders → upgraders → repairers → scout → claimer
+- Upgrader count driven by `desiredUpgraders()` (storage-energy tiers); see Economy section
 - Builders only spawn when construction sites exist
+- Repairer only spawns when actual repair demand exists; gated per `barrierCap()` and tower energy state
+- Hauler ceiling: total live haulers cannot exceed source container count; emergency spawn creates a miner (not harvester) when a container exists to avoid ghost haulers
 - All roles wait for full-capacity body before spawning; income-critical roles bypass to prevent starvation
-- Repairer always spawns (max=1); tower and repairer each have a distinct repair domain
 
 **Multi-Room Expansion**
 - Scout deployed when GCL headroom exists (RCL 4+)
@@ -123,40 +126,48 @@ push.js                  — Upload script: reads src/*.js and POSTs to Screeps 
 
 ## Recent Changes
 
+### 2026-04-30 — Tiered Barrier Caps, Demand-Based Repairer, Storage-Scaled Upgraders, Hauler Ceiling
+
+- `barrierCap(rcl)` introduced: tiered HP targets 10k/50k/200k/1M/5M replace hitsMax for wall/rampart repair
+- Repairer spawn gated on actual demand (emergency rampart, barriers below cap, non-barrier damage without energized tower)
+- `desiredUpgraders()` replaces fixed upgrader count: 1/2/3/4 tiers based on storage energy at 50k/150k/300k
+- Upgrader bodies scaled up to 12W (1500e); CARRY reduced to 1; RCL-8-safe
+- Hauler total-count ceiling added: live haulers cannot exceed source container count
+- Emergency spawn path fixed: miner (not harvester) spawned when source container exists — prevents ghost haulers
+- Hauler delivery flip corrected to 100% full store (was 50%); eliminates unnecessary double-trips
+- Miner source assignment filtered to `homeRoom`; cross-room miners no longer conflict with home-room miners
+- Link single-transfer-per-receiver: `break` after first `OK` prevents double-send
+- Defender/defender-ranged body energy gates corrected to exact body costs (removed 100–240e padding)
+- `cache.find()` adopted in `planner.js`, `role.mineralHarvester.js`, `role.scout.js`
+- Source container fallback threshold lowered to 0 in builder and repairer (was 500 energy)
+- Remote miner full-store check moved before `harvest()` call
+
 ### 2026-04-29 — Repairer Barrier Overhaul, Ranged Defender, Hauler Pinning
 
-- Repairer now raises walls and ramparts to full `hitsMax` when a tower is present (not a HP floor)
-- Barriers take priority over containers/roads in the repair queue
-- Persistent `repairTarget` in memory: repairer commits its full energy load to one barrier before re-targeting
-- `hasWork()` helper prevents repairer harvesting when nothing needs repair; idle repairer dumps to storage
-- Fixed `creep.say()` outputting "brick" instead of 🧱 emoji
-- Tower simplified: handles only emergency ramparts (< 500 HP) and non-barrier structure repair; wall/rampart work fully delegated to repairer
-- Ranged defender variant spawned when hostile squad includes HEAL parts; uses `rangedAttack()` / `rangedMassAttack()` from rampart cover
-- Melee defender holds rampart position; retreats when below 40% HP
-- Hauler delivery flip threshold lowered to 50% capacity; per-container pinning via `containerId`
-- `pickupNearby()` capped at range 5 (hauler and upgrader)
+- Repairer raises walls and ramparts to full `hitsMax` when a tower is present (not a HP floor)
+- Barriers take priority over containers/roads in the repair queue; persistent `repairTarget` commits full energy load to one barrier
+- `hasWork()` helper prevents repairer harvesting when nothing needs repair
+- Tower simplified: handles only emergency ramparts (< 500 HP) and non-barrier structure repair
+- Ranged defender spawned when hostile squad includes HEAL parts; melee holds rampart position and retreats at 40% HP
+- Hauler per-container pinning via `containerId`; `pickupNearby()` capped at range 5
 
 ### 2026-04-28 — Economy Hardening, Stamp Planner Rewrite, Remote/Mineral Roles
 
 - Fixed emergency guard (requires zero harvesters, not just zero miners/haulers)
-- Fixed miner pre-spawn race: `activeMinerCount` excludes dying miners; replacement spawns before expiry
-- Fixed rebalancer incorrectly reassigning miners mid-life
-- Spawn one miner per container; `containerId` stamped at spawn time
+- Fixed miner pre-spawn race and rebalancer incorrectly reassigning miners mid-life
 - Fixed hauler link detection: requires `srcLinks >= 1 && receiverLinks >= 1`
-- Upgrader count corrected to `rcl>=6?3:2`; GCL farming at RCL 8 (5 upgraders when storage > 100k)
 - Planner.js rewritten: fixed 11×11 stamp template with `stampFits()` footprint validation
 - New `role.remoteMiner.js` and `role.mineralHarvester.js`
 
 ## Roadmap
 
-- Deploy and watch repairer lock onto one wall per energy load; confirm barriers trend toward maxHits
+- Deploy and observe: barriers trend toward RCL-appropriate cap; upgrader count shifts at 50k/150k/300k storage thresholds; repairer does not spawn when towers have energy and nothing needs repair
 - Observe ranged defender behavior against a healer-accompanied raid
-- Verify miner pre-spawn, builder count gating, hauler link collapse in live game
 - Test remote miner (`Memory.remoteRooms`) and mineral harvester (RCL 6+)
 - Verify stamp planner hub tile selection on live room
 - Add remote hauler to collect dropped energy from remote miners
-- Hauler withdraw from storage when storage exists
-- Clean up or delete `defense.js` (mostly empty after planner consolidation)
+- Add hauler withdraw from storage when storage exists
+- Delete or consolidate `defense.js` (mostly dead code after planner consolidation)
 - Reach RCL 8 in starting room, claim second room
 
 ## License

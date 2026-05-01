@@ -4,6 +4,97 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-04-30 — Tiered Barrier Caps, Demand-Based Repairer, Storage-Scaled Upgraders, Hauler Ceiling, 15 Audit Fixes
+
+**Duration Estimate**: Single focused session
+**Session Focus**: Replace hitsMax barrier targeting with RCL-tiered caps, gate repairer spawning on actual demand, scale upgrader count with stored energy, fix hauler over-spawn, and apply a full 15-fix audit across 9 files.
+
+### What Was Accomplished
+
+**Tiered barrier HP caps (`role.repairer.js`, `main.js`):**
+- `barrierCap(rcl)` function introduced in `role.repairer.js`: RCL 1–3 → 10k, RCL 4–5 → 50k, RCL 6 → 200k, RCL 7 → 1M, RCL 8 → 5M
+- Repairer stops repairing walls/ramparts when they reach the cap; does not chase hitsMax (up to 300M)
+- `barrierCap` exported from `role.repairer.js` and imported into `main.js` so both the repairer logic and spawn gate use the same caps
+
+**Demand-based repairer spawning (`main.js`):**
+- Repairer `max` is now 0 unless actual repair work exists (was always 1)
+- Spawn gate mirrors repairer logic: emergency rampart (< 500 HP) always triggers; non-barrier damage only triggers when no tower has energy; barriers below RCL cap always trigger
+- Fixes idle repairer burning energy with nothing to do
+
+**Tower-aware spawn gate:**
+- `hasTowerWithEnergy` (not `hasTower`) gates the non-barrier spawn condition; a tower with 0 energy cannot repair, so a repairer should still spawn
+
+**Storage-scaled upgrader count (`main.js`):**
+- `desiredUpgraders(room)` replaces `upgraderMax` / GCL-farming override
+- No storage: 2 upgraders. Storage < 50k: 1. < 150k: 2. < 300k: 3. 300k+: 4
+- Prevents upgraders from starving the economy at low storage while hammering the controller when energy is plentiful
+
+**Larger upgrader bodies (`main.js`):**
+- New tiers: 1W (200e), 3W (450e), 5W (700e), 8W (1050e), 12W (1500e)
+- Top tier 12W is safely under the RCL 8 controller upgrade cap of 15W/tick
+- Reduced CARRY from 2 to 1 (upgrader is nearly stationary; large CARRY was wasted capacity)
+
+**Hauler over-spawn fix (`main.js`):**
+- Added `totalLiveHaulers` ceiling: if total live haulers ≥ source container count, skip spawn loop entirely
+- Emergency fallback path now spawns a miner (not a harvester) when a source container exists; old harvester spawn created an unassigned hauler invisible to per-container count, inflating hauler roster permanently
+- Hauler delivery flip corrected to 100% full store (`getFreeCapacity() === 0`) — was 50%, which caused double trips
+
+**15 audit fixes across 9 files:**
+- `main.js`: link single-transfer-per-receiver (`break` after first `OK`); defender/defender-ranged body energy gates corrected to exact costs (removed ~100–240e padding); `desiredUpgraders()` replaces ad-hoc upgrader scaling
+- `role.miner.js`: source assignment filtered by `homeRoom` — cross-room miners were conflicting with home-room miners
+- `role.hauler.js`: delivery flip raised from 50% to 100% store capacity
+- `role.remoteMiner.js`: full-store check moved before `harvest()` call so miner drops energy before attempting another harvest (was harvesting then dropping on same tick)
+- `role.scout.js`: two filtered `room.find(FIND_STRUCTURES)` calls collapsed into one cached `allStructures`
+- `role.mineralHarvester.js`: extractor and mineral finds converted to `cache.find()`
+- `role.builder.js`: source container fallback threshold lowered from 500 to 0
+- `role.repairer.js`: source container fallback threshold lowered from 500 to 0; idle park changed from `FIND_MY_SPAWNS` to filtered `FIND_MY_STRUCTURES`
+- `planner.js`: `countType()` and `needsReplanning()` `room.find()` calls replaced with `cache.find()`; `room.find(FIND_SOURCES)` hoisted above `targets` array to avoid redundant second find
+
+### Files Changed
+
+- `src/main.js` — tiered barrier caps in spawn gate, `desiredUpgraders()`, hauler ceiling, emergency miner spawn, upgrader bodies, defender body gate corrections, link single-transfer
+- `src/role.repairer.js` — `barrierCap()` function + export, source container threshold 500→0, idle park fix, `hasTowerWithEnergy` throughout
+- `src/role.hauler.js` — delivery flip 50%→100% full store
+- `src/role.miner.js` — source assignment filtered to `homeRoom`
+- `src/role.remoteMiner.js` — full-store check moved before `harvest()`
+- `src/role.scout.js` — single `room.find()` replacing two filtered finds
+- `src/role.mineralHarvester.js` — `cache.find()` for extractor and mineral
+- `src/role.builder.js` — source container threshold 500→0
+- `src/planner.js` — `cache.find()` in `countType()` and `needsReplanning()`; `FIND_SOURCES` hoisted
+
+### Commits This Session
+
+- `79bbb8c` — Tiered barrier caps, demand-based repairer, storage-scaled upgraders, hauler ceiling, 15 audit fixes
+
+### Decisions Made
+
+- **RCL-tiered barrier caps** — repairing to hitsMax (300M) at low RCL wastes repairer time; caps scaled with RCL ensure barriers are defensively adequate without over-investing; single `barrierCap()` function is the source of truth for both repairer and spawn gate.
+- **Demand-based repairer spawn** — an idle repairer is pure energy drain; gating on actual repair demand eliminates deadweight.
+- **Tower-aware spawn gate** — non-barrier damage does not warrant a repairer when towers have energy; they handle roads and containers at idle.
+- **Storage-scaled upgrader count** — four tiers avoid starving economy at low reserves while hammering the controller when energy is plentiful.
+- **Hauler total-count ceiling** — per-container assignment alone failed to account for legacy unassigned haulers from old emergency spawns; a ceiling prevents unbounded accumulation.
+- **Emergency path spawns miner** — a harvester with no container is invisible to per-container hauler count; miner keeps the economy on the correct path.
+- **Hauler delivery at 100% full** — 50% flip caused double trips; full-store delivery is more efficient per trip.
+- **Miner source assignment filtered to homeRoom** — cross-room miners were conflicting with home-room miners for source IDs.
+- **Link single-transfer-per-receiver** — old loop could double-send when multiple source links had energy; `break` prevents this.
+
+### Issues Encountered
+
+- Repairer `hasTower` bug: the spawn gate was checking whether any tower exists, not whether any tower has energy. A tower at 0 energy does not repair, so the gate was incorrectly suppressing the repairer spawn. Fixed by switching to `hasTowerWithEnergy`.
+- Emergency harvester starvation at RCL 4+: the old emergency path spawned a creep with `role: 'harvester'` that had no `containerId`, making it invisible to the per-container hauler count. Each emergency event added a permanent ghost hauler to the roster.
+- Hauler economy deadlock: haulers were triggering delivery at 50% store, making two trips per full load. The energy/trip ratio was worse than necessary, causing extension underfill during high-demand ticks.
+- Cross-room miner source conflict: when a second room's miners ran `assignSource()`, they saw home-room miners as occupying home-room sources and assigned themselves the same sources, causing two miners to camp one source.
+
+### Remaining / Next Session
+
+- Deploy to MMO and observe barrier cap behavior (barriers should trend toward RCL cap, not hitsMax)
+- Watch upgrader count shift through the 50k/150k/300k storage thresholds
+- Confirm repairer does not spawn when towers have energy and nothing needs repair
+- Observe ranged defender behavior against a healer-accompanied raid (carry-over)
+- Test remote miner and mineral harvester in live game
+
+---
+
 ## Session: 2026-04-29 — Repairer Barrier Overhaul, Ranged Defender, Hauler Pinning
 
 **Duration Estimate**: Single focused session
