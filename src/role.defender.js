@@ -17,18 +17,16 @@ function onRampart(creep) {
 
 const roleDefender = {
     run: function (creep) {
+        // Primary target: invader core. Fallback: nearest hostile creep.
+        const cores = cache.find(creep.room, FIND_STRUCTURES)
+            .filter(s => s.structureType === STRUCTURE_INVADER_CORE);
         const hostiles = cache.find(creep.room, FIND_HOSTILE_CREEPS);
 
-        if (hostiles.length === 0) {
-            // Rally to a rampart near spawn while waiting
+        if (cores.length === 0 && hostiles.length === 0) {
+            // Nothing left to fight — rally to spawn
             const spawns = cache.find(creep.room, FIND_MY_SPAWNS);
-            if (spawns.length > 0) {
-                const rallyRampart = findBestRampart(creep);
-                if (rallyRampart && !creep.pos.isEqualTo(rallyRampart.pos)) {
-                    creep.moveTo(rallyRampart, { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 10 });
-                } else if (!rallyRampart && !creep.pos.inRangeTo(spawns[0], 3)) {
-                    creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 10 });
-                }
+            if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 3)) {
+                creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 10 });
             }
             creep.say('👀');
             return;
@@ -45,41 +43,15 @@ const roleDefender = {
             }
         }
 
-        const target = creep.pos.findClosestByRange(hostiles);
+        // Prefer attacking the invader core; fall back to nearest hostile creep
+        const target = cores.length > 0
+            ? creep.pos.findClosestByRange(cores)
+            : creep.pos.findClosestByRange(hostiles);
 
-        if (creep.memory.ranged) {
-            if (creep.rangedAttack(target) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 0 });
-            }
-            // Use mass attack when multiple hostiles are in range 3
-            const inRange = hostiles.filter(h => creep.pos.inRangeTo(h, 3));
-            if (inRange.length > 1) creep.rangedMassAttack();
-            creep.say('🏹');
-        } else {
-            if (onRampart(creep)) {
-                // On a rampart — try to stay put and let hostiles come to us
-                if (creep.pos.inRangeTo(target, 1)) {
-                    creep.attack(target);
-                } else {
-                    // Move toward target only if no rampart is closer to them
-                    const closerRampart = cache.find(creep.room, FIND_MY_STRUCTURES).find(
-                        s => s.structureType === STRUCTURE_RAMPART &&
-                             s.pos.getRangeTo(target) < creep.pos.getRangeTo(target)
-                    );
-                    if (closerRampart) {
-                        creep.moveTo(closerRampart, { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 5 });
-                    } else {
-                        creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 0 });
-                    }
-                    creep.attack(target);
-                }
-            } else {
-                if (creep.attack(target) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 0 });
-                }
-            }
-            creep.say('⚔️');
+        if (creep.attack(target) === ERR_NOT_IN_RANGE) {
+            creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' }, reusePath: 0 });
         }
+        creep.say('⚔️');
     }
 };
 

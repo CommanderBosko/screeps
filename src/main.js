@@ -310,25 +310,21 @@ function spawnForRoom(spawn) {
     const room = spawn.room;
     const rn = room.name;
 
-    // Defenders — reactive priority
-    const hostiles = cache.find(room, FIND_HOSTILE_CREEPS);
-    if (hostiles.length > 0 && roomCreeps('defender', rn) < 2) {
-        const hasHealer = hostiles.some(h => h.body.some(p => p.type === HEAL));
-        const defRole = hasHealer ? 'defender-ranged' : 'defender';
-        const defBody = getBody(defRole, room.energyCapacityAvailable);
+    // Defenders — only when an invader core is present in the room
+    const invaderCores = cache.find(room, FIND_STRUCTURES).filter(s => s.structureType === STRUCTURE_INVADER_CORE);
+    if (invaderCores.length > 0 && roomCreeps('defender', rn) < 2) {
+        const defBody = getBody('defender', room.energyCapacityAvailable);
         const defCost = bodyCost(defBody);
         if (room.energyAvailable >= defCost) {
-            spawn.spawnCreep(defBody, 'Defender' + Game.time, { memory: { role: 'defender', ranged: hasHealer, homeRoom: rn } });
+            spawn.spawnCreep(defBody, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
             return;
         }
         // Can't afford ideal body yet — spawn minimum viable defender immediately if no coverage
         if (roomCreeps('defender', rn) === 0 && room.energyAvailable >= 190) {
-            const emergBody = hasHealer && room.energyAvailable >= 300
-                ? [TOUGH, TOUGH, RANGED_ATTACK, MOVE, MOVE, MOVE]  // 320
-                : room.energyAvailable >= 280
-                    ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
-                    : [TOUGH, ATTACK, MOVE, MOVE];
-            spawn.spawnCreep(emergBody, 'Defender' + Game.time, { memory: { role: 'defender', ranged: hasHealer, homeRoom: rn } });
+            const emergBody = room.energyAvailable >= 280
+                ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
+                : [TOUGH, ATTACK, MOVE, MOVE];
+            spawn.spawnCreep(emergBody, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
             return;
         }
     }
