@@ -4,7 +4,7 @@ A Screeps MMO bot written in plain JavaScript. The bot automates a full colony l
 
 ## Current Status
 
-Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5+ reliably. Recent sessions focused on RCL-tiered barrier HP caps, demand-based repairer spawning, storage-scaled upgrader counts, hauler over-spawn fixes, and a 15-fix audit sweep across economy, defense, and CPU efficiency.
+Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5 reliably; RCL 5 unlock expected imminently. Recent work refined defender spawning (now invader-core-gated, melee-only), hardened barrier repair with tiered HP caps, and fixed numerous economy issues across the hauler, miner, and upgrader pipeline.
 
 ## Features
 
@@ -35,11 +35,11 @@ Active development — mid-game systems stable and well-hardened. Bot progresses
 - Repairer only spawns when actual repair demand exists: emergency rampart (< 500 HP), barriers below cap, or non-barrier damage when no tower has energy
 - Without an energized tower, repairer handles roads, containers, and other non-barrier structures
 - `hasWork()` helper prevents repairer from harvesting when nothing needs repair; idle repairer dumps energy to storage
-- Defenders: melee variant holds rampart position and retreats to ramparts below 40% HP; ranged variant spawned when hostiles include HEAL parts — uses `rangedAttack()`/`rangedMassAttack()` from rampart cover
+- Defenders: spawn only when a `STRUCTURE_INVADER_CORE` is detected (towers handle ordinary NPC creep waves before a defender finishes spawning); melee-only body (`TOUGH+ATTACK+MOVE`); primary target is the invader core, falls back to nearest hostile creep; retreats to nearest rampart below 40% HP
 - Safe-mode auto-activation when hostile combat creeps are present and towers are low on energy
 
 **Spawn Logic**
-- Priority order: defenders (reactive, melee or ranged based on hostile body) → emergency miner/harvester → miners → harvesters (RCL 1–3) → haulers → pioneers → attackers → remote miners → mineral harvesters → builders → upgraders → repairers → scout → claimer
+- Priority order: defenders (invader core present only; melee-only) → emergency miner/harvester → miners → harvesters (RCL 1–3) → haulers → pioneers → attackers → remote miners → mineral harvesters → builders → upgraders → repairers → scout → claimer
 - Upgrader count driven by `desiredUpgraders()` (storage-energy tiers); see Economy section
 - Builders only spawn when construction sites exist
 - Repairer only spawns when actual repair demand exists; gated per `barrierCap()` and tower energy state
@@ -126,6 +126,14 @@ push.js                  — Upload script: reads src/*.js and POSTs to Screeps 
 
 ## Recent Changes
 
+### 2026-05-01 — Invader Core-Gated Defender, Melee-Only Body, RCL 5 Readiness
+
+- Defender spawn now triggers only when `STRUCTURE_INVADER_CORE` is present; removed reactive spawn on normal NPC invader creep waves (towers handle them before a defender finishes spawning)
+- Ranged defender branch removed; defender is melee-only (`TOUGH+ATTACK+MOVE` variants)
+- `role.defender.js` targets the invader core first (`findClosestByRange`), falls back to nearest hostile creep
+- Emergency minimum-viable-defender simplified to melee body only; `ranged` memory flag removed
+- RCL 5 readiness confirmed: storage, 2nd tower gate, link activation, and `desiredUpgraders()` all handled by existing code — no changes needed for tonight's unlock
+
 ### 2026-04-30 — Tiered Barrier Caps, Demand-Based Repairer, Storage-Scaled Upgraders, Hauler Ceiling
 
 - `barrierCap(rcl)` introduced: tiered HP targets 10k/50k/200k/1M/5M replace hitsMax for wall/rampart repair
@@ -161,10 +169,12 @@ push.js                  — Upload script: reads src/*.js and POSTs to Screeps 
 
 ## Roadmap
 
-- Deploy and observe: barriers trend toward RCL-appropriate cap; upgrader count shifts at 50k/150k/300k storage thresholds; repairer does not spawn when towers have energy and nothing needs repair
-- Observe ranged defender behavior against a healer-accompanied raid
+- Observe RCL 5 unlock: storage placed, 2nd tower built, link network activates, hauler count collapses to 1
+- Watch `desiredUpgraders()` scale at 50k/150k/300k storage thresholds
+- Verify invader core detection: defender spawns on core presence only; no spawn for ordinary NPC waves
+- Monitor barrier HP trending toward 50k (RCL 4–5 cap); confirm demand-based repairer gate works
 - Test remote miner (`Memory.remoteRooms`) and mineral harvester (RCL 6+)
-- Verify stamp planner hub tile selection on live room
+- Re-add ranged defender if player raids with healers become a problem
 - Add remote hauler to collect dropped energy from remote miners
 - Add hauler withdraw from storage when storage exists
 - Delete or consolidate `defense.js` (mostly dead code after planner consolidation)

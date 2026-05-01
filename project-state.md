@@ -1,10 +1,10 @@
 # Project State
 
-_Last updated: 2026-04-30_
+_Last updated: 2026-05-01_
 
 ## Current Project State
 
-The bot is in active mid-game development. Core economic and defensive systems are stable and significantly refined. This session introduced RCL-tiered barrier HP caps, demand-based repairer spawning, storage-scaled upgrader counts, a hauler over-spawn ceiling, and 15 targeted audit fixes across 9 files covering critical economy deadlocks, body gate corrections, and redundant find() calls.
+The bot is in active mid-game development. Core economic and defensive systems are stable. This session simplified defender spawning to trigger only on invader core presence (towers handle normal NPC invaders reliably), stripped the ranged defender branch, and confirmed the bot is fully ready for tonight's RCL 5 unlock with no code changes required.
 
 **What works:**
 - Full RCL 1–8 spawn logic with role prioritization and emergency fallback
@@ -28,7 +28,8 @@ The bot is in active mid-game development. Core economic and defensive systems a
 - **Repairer spawn gate**: demand-driven; only spawns when emergency rampart (<500 HP) exists, or barriers below cap, or non-barrier damage with no energized tower
 - Repairer hasTower bug fixed: gate now checks `hasTowerWithEnergy` (not just `hasTower`)
 - **Tower simplified**: handles only emergency ramparts (< 500 HP) and non-barrier structure repair
-- **Defender ranged variant**: spawned when hostiles have HEAL parts; uses RANGED_ATTACK, rangedMassAttack(); melee holds rampart position
+- **Defender spawn gated on invader core**: defenders only spawn when `STRUCTURE_INVADER_CORE` is detected; towers handle normal NPC creep waves reliably before a defender can finish spawning
+- **Defender melee-only**: ranged branch removed; `role.defender.js` targets invader cores first, falls back to nearest hostile creep; retreat to rampart at 40% HP retained
 - Retreat logic: defender flees to nearest rampart below 40% HP
 - Safe-mode auto-activation when hostile combat creeps present and towers low
 - Scout → claimer → pioneer pipeline for automated room expansion (RCL 4+ headroom)
@@ -53,10 +54,10 @@ The bot is in active mid-game development. Core economic and defensive systems a
 ## Current Goals
 
 ### Short-term (next 1–3 sessions)
-- Deploy and verify: repairer respects RCL-tiered barrier caps; barriers trend toward cap over time
-- Verify storage-scaled upgrader counts activate correctly as storage fills
-- Verify demand-based repairer spawn gate: repairer does not spawn when towers have energy and nothing needs repair
-- Observe ranged defender spawning and engaging healer-accompanied raiders
+- Observe RCL 5 unlock tonight: storage placed, 2nd tower built, link network activates, hauler count collapses to 1
+- Watch `desiredUpgraders()` activate once storage is built and scale as storage fills
+- Verify invader core detection: defender spawns only when a core appears; no spawn for ordinary NPC creep waves
+- Verify repairer barrier caps trending toward 50k (RCL 4–5 cap)
 - Test remote miner by setting `Memory.remoteRooms` and watching in game
 
 ### Long-term
@@ -67,6 +68,8 @@ The bot is in active mid-game development. Core economic and defensive systems a
 
 ## Recent Decisions
 
+- **Invader core-gated defender spawn** — towers kill NPC invaders before a defender finishes spawning (minimum 190e body takes multiple ticks); spawning defenders for ordinary creep waves wasted energy and occupied the spawn. Invader cores require a melee attacker since towers cannot target structures — the core is the actual threat.
+- **Melee-only defender** — the ranged variant (for healer-accompanied raids) added complexity without frequent payoff; removed to simplify the spawn path. Can be re-added if player raids with healers become common.
 - **RCL-tiered barrier caps** — repairing to hitsMax (300M) at low RCL wastes repairer time; caps scaled with RCL ensure barriers are defensively adequate without over-investing; `barrierCap()` is the single source of truth used in both repairer and spawn gate.
 - **Demand-based repairer spawn** — an idle repairer is pure energy drain; gating on actual repair demand eliminates the deadweight repairer that would otherwise spawn into an empty queue.
 - **Tower-aware spawn gate** — non-barrier damage does not warrant a repairer when towers have energy; towers handle roads and containers at idle; this prevents spawning a redundant repairer that competes with towers.
@@ -90,10 +93,12 @@ The bot is in active mid-game development. Core economic and defensive systems a
 
 ## Next Steps
 
-1. Deploy to MMO and monitor barrier cap behavior: barriers should trend toward RCL-appropriate cap, not hitsMax.
-2. Watch upgrader count shift as storage fills through the 50k/150k/300k thresholds.
-3. Confirm repairer does not spawn when towers have energy and nothing needs repair.
-4. Set `Memory.remoteRooms = { 'W1N1': ['W2N1'] }` (example) and watch remote miner in live game.
-5. At RCL 6, verify mineral harvester spawns and deposits to terminal.
-6. Verify stamp planner hub tile selection on current room.
-7. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
+1. Observe RCL 5 unlock tonight: confirm storage is placed, 2nd tower construction site appears, link network activates, and hauler count collapses to 1.
+2. Watch `desiredUpgraders()` activate once storage is built; upgrader count should shift at 50k/150k/300k storage thresholds.
+3. Monitor barrier HP trending toward 50k (RCL 4–5 cap); confirm repairer does not spawn when towers have energy and nothing needs repair.
+4. Verify invader core detection in live game: defender spawns only when a core is present.
+5. If player raids with healers become a problem, re-add the ranged defender variant.
+6. Set `Memory.remoteRooms = { 'W1N1': ['W2N1'] }` (example) and watch remote miner in live game.
+7. At RCL 6, verify mineral harvester spawns and deposits to terminal.
+8. Verify stamp planner hub tile selection on current room.
+9. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.

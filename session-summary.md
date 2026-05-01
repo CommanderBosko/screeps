@@ -4,6 +4,66 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-05-01 — Invader Core-Gated Defender & RCL 5 Readiness Assessment
+
+**Duration Estimate**: Short focused session (1–2 commits)
+**Session Focus**: Simplify defender spawning to only trigger on invader core presence, strip the ranged defender branch, and assess whether the bot is ready for tonight's RCL 5 unlock.
+
+### What Was Accomplished
+
+**Invader core-gated defender spawn (`main.js`):**
+- Removed reactive defender spawn that fired on any `FIND_HOSTILE_CREEPS` presence
+- Defenders now only spawn when a `STRUCTURE_INVADER_CORE` is present in the room
+- Rationale: towers reliably kill normal NPC invader creeps before a defender can even finish spawning; spawning defenders for them wasted energy and cluttered spawn queue
+
+**Simplified defender to melee-only (`main.js`, `role.defender.js`):**
+- Removed ranged defender branch entirely (no more `defender-ranged` role triggered from spawn)
+- Emergency minimum-viable-defender simplified: melee body only (`[TOUGH, ATTACK, MOVE, MOVE]` / `[TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]`)
+- `spawn.spawnCreep` call cleaned up: removed `ranged: hasHealer` memory flag
+- `hasHealer` check on hostile bodies removed from spawn loop
+
+**Invader core targeting in `role.defender.js`:**
+- `run()` now queries `FIND_STRUCTURES` for `STRUCTURE_INVADER_CORE` first
+- If cores present, `findClosestByRange(cores)` is the attack target
+- Falls back to `findClosestByRange(hostiles)` when no core is found (handles any remaining hostile creeps in the room after the core situation)
+- Retreat logic (40% HP → nearest rampart) retained
+
+**RCL 5 readiness assessment:**
+- Reviewed spawn logic, structure gates, link network activation, and upgrader counts
+- Storage (RCL 4), 2nd tower (RCL 5 unlock), and 10 extensions all fully gated and handled by existing code
+- `desiredUpgraders()` activates automatically once storage is built
+- No code changes required for RCL 5 unlock — bot is ready
+
+### Files Changed
+
+- `src/main.js` — Replaced hostile-creep-reactive defender spawn with invader-core-gated spawn; removed ranged defender branch and `hasHealer` check; simplified emergency body to melee-only
+- `src/role.defender.js` — Added `STRUCTURE_INVADER_CORE` detection as primary attack target; removed all ranged attack paths; simplified `run()` to melee-only logic
+
+### Commits This Session
+
+- `edb1174` — Invader core-gated defender, simplified melee body, RCL 5 verified ready
+
+### Decisions Made
+
+- **Remove reactive defender spawning for normal NPC invaders** — towers consistently kill NPC invaders before a defender finishes spawning (300e minimum body takes multiple ticks to produce); the defender only consumes energy and occupies the spawn unnecessarily.
+- **Invader core triggers defender** — invader cores are the actual threat (they generate waves of invaders and persist until destroyed); a melee defender is required to attack them since towers cannot target structures.
+- **Melee-only defender** — the ranged variant was added to handle healer-accompanied raids, but those are uncommon enough that the complexity is not worth the maintenance cost; the melee body is simpler to reason about and effective against the primary use case (invader core destruction).
+- **RCL 5 assessed without code changes** — all required infrastructure (storage, 2nd tower spawn gating, extension count handling) was confirmed present in existing code; clean bill of health before unlock.
+
+### Issues Encountered
+
+- None; changes were clean refactors with no regressions expected.
+
+### Remaining / Next Session
+
+- Observe invader core detection in live game: verify defender spawns when core appears and does not spawn for ordinary NPC creep waves
+- Observe RCL 5 unlock tonight: storage placed, 2nd tower built, hauler/link upgrade handling
+- Monitor `desiredUpgraders()` activating once storage is built and filling
+- Continue tracking barrier HP progress toward RCL 4–5 cap (50k)
+- Consider re-evaluating ranged defender if player raids with healers become a problem
+
+---
+
 ## Session: 2026-04-30 — Tiered Barrier Caps, Demand-Based Repairer, Storage-Scaled Upgraders, Hauler Ceiling, 15 Audit Fixes
 
 **Duration Estimate**: Single focused session
