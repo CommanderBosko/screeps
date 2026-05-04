@@ -12,7 +12,9 @@ function barrierCap(rcl) {
 
 const roleRepairer = {
     run: function (creep) {
-        if (creep.memory.repairing && creep.store[RESOURCE_ENERGY] === 0) {
+        // Flip to harvesting only when store is completely empty.
+        // This ensures the full energy load is committed to repair work before refueling.
+        if (creep.memory.repairing && creep.store.getUsedCapacity() === 0) {
             creep.memory.repairing = false;
             creep.memory.repairTarget = null;
         }
@@ -36,9 +38,24 @@ const roleRepairer = {
                         return;
                     }
                 }
-                creep.say('💤');
+                creep.say('idle');
             }
         }
+    },
+
+    // Validate and return a persisted repair target, or null if it is stale or at cap.
+    // isValid(obj) is called with the live game object to check if it still needs work.
+    _resolveTarget: function (creep, isValid) {
+        if (!creep.memory.repairTarget) return null;
+        const obj = Game.getObjectById(creep.memory.repairTarget);
+        if (obj && isValid(obj)) return obj;
+        creep.memory.repairTarget = null;
+        return null;
+    },
+
+    // Lock onto a target for the rest of this energy load.
+    _lockTarget: function (creep, target) {
+        creep.memory.repairTarget = target ? target.id : null;
     },
 
     doRepair: function (creep) {
@@ -46,107 +63,84 @@ const roleRepairer = {
         const allStructures = cache.find(creep.room, FIND_STRUCTURES);
         const cap = barrierCap(creep.room.controller ? creep.room.controller.level : 1);
         const roomTowers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER);
-        const hasTowerWithEnergy = roomTowers.some(s => s.store[RESOURCE_ENERGY] > 0);
+        const hasTower = roomTowers.length > 0;
 
-        // Fill towers first (top priority for towers below 50%)
-        const towers = roomTowers.filter(s =>
-            s.store[RESOURCE_ENERGY] < s.store.getCapacity(RESOURCE_ENERGY) * 0.5
-        );
-        if (towers.length > 0) {
-            const target = creep.pos.findClosestByRange(towers);
-            if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
-            }
-            creep.say('🗼');
-            return;
-        }
-
-        // Emergency: repair ramparts critically close to 0 HP before normal maintenance.
+        // --- Emergency rampart rescue (always, regardless of tower presence) ---
+        // Persist the target so the full load goes to one dying rampart.
         const RAMPART_EMERGENCY = 500;
         const dyingRamparts = allStructures
             .filter(s => s.structureType === STRUCTURE_RAMPART && s.hits < RAMPART_EMERGENCY);
         if (dyingRamparts.length > 0) {
-            dyingRamparts.sort((a, b) => a.hits - b.hits);
-            const target = dyingRamparts[0];
+            let target = roleRepairer._resolveTarget(creep, s =>
+                s.structureType === STRUCTURE_RAMPART && s.hits < RAMPART_EMERGENCY
+            );
+            if (!target) {
+                dyingRamparts.sort((a, b) => a.hits - b.hits);
+                target = dyingRamparts[0];
+                roleRepairer._lockTarget(creep, target);
+            }
             if (creep.repair(target) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' } });
             }
-            creep.say('🚨');
+            creep.say('SOS');
             return;
         }
 
-        // Without a tower with energy, repair roads/containers/etc. before barriers
-        // (no energized tower means no other structure is maintaining non-barriers).
-        if (!hasTowerWithEnergy) {
-            const damaged = allStructures
-                .filter(s =>
-                    s.hits < s.hitsMax &&
-                    s.structureType !== STRUCTURE_WALL &&
-                    s.structureType !== STRUCTURE_RAMPART
-                );
-            if (damaged.length > 0) {
-                damaged.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
-                const target = damaged[0];
-                if (creep.repair(target) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
-                }
-                creep.say('🔧');
-                return;
-            }
-        }
+        // --- Tower present: dump entire energy load into one barrier ---
+        // Pick the weakest barrier once at the start of each energy load.
+        // Only switch targets if the locked structure was destroyed.
+        // Never abandon mid-trip because a target reached cap — stay until store is empty.
+        if (hasTower) {
+            let barrierTarget = creep.memory.repairTarget
+                ? Game.getObjectById(creep.memory.repairTarget)
+                : null;
 
-        // With an energized tower present: barriers take priority over non-barrier maintenance.
-        // Tower already handles road/container upkeep at idle — repairer should focus on
-        // walls and ramparts which towers do not raise high enough on their own.
-        // Persist target in memory so the creep commits its full energy load to one barrier
-        // instead of re-sorting every tick (walls can have up to 300M maxHits).
-        if (hasTowerWithEnergy) {
-            const hasWeakBarrier = allStructures.some(s =>
-                (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
-                s.hits < cap
-            );
-            if (hasWeakBarrier) {
-                // Validate persisted target: must still exist and still be below the RCL cap
-                let barrierTarget = creep.memory.repairTarget
-                    ? Game.getObjectById(creep.memory.repairTarget)
-                    : null;
-                if (!barrierTarget || barrierTarget.hits >= cap) {
-                    // Pick the weakest barrier by absolute HP and lock onto it
-                    const weakBarrier = allStructures.filter(s =>
-                        (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
-                        s.hits < cap
-                    );
-                    weakBarrier.sort((a, b) => a.hits - b.hits);
-                    barrierTarget = weakBarrier[0] || null;
-                    creep.memory.repairTarget = barrierTarget ? barrierTarget.id : null;
-                }
-                if (barrierTarget) {
-                    if (creep.repair(barrierTarget) === ERR_NOT_IN_RANGE) {
-                        creep.moveTo(barrierTarget, { visualizePathStyle: { stroke: '#aaaaaa' } });
-                    }
-                    creep.say('🧱');
+            if (!barrierTarget) {
+                const weakBarriers = allStructures.filter(s =>
+                    (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
+                    s.hits < cap
+                );
+                if (weakBarriers.length === 0) {
+                    creep.memory.repairTarget = null;
+                    creep.say('idle');
                     return;
                 }
+                weakBarriers.sort((a, b) => a.hits - b.hits);
+                barrierTarget = weakBarriers[0];
+                creep.memory.repairTarget = barrierTarget.id;
             }
-            // No barriers need work — clear any stale target, fall through to non-barrier repair
-            creep.memory.repairTarget = null;
 
-            // Fall back to non-barrier maintenance when all barriers are at cap
-            const damagedNonBarrier = allStructures
-                .filter(s =>
-                    s.hits < s.hitsMax &&
-                    s.structureType !== STRUCTURE_WALL &&
-                    s.structureType !== STRUCTURE_RAMPART
-                );
-            if (damagedNonBarrier.length > 0) {
-                damagedNonBarrier.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
-                const target = damagedNonBarrier[0];
-                if (creep.repair(target) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
-                }
-                creep.say('🔧');
-                return;
+            if (creep.repair(barrierTarget) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(barrierTarget, { visualizePathStyle: { stroke: '#aaaaaa' } });
             }
+            creep.say('🧱');
+            return;
+        }
+
+        // --- No tower: repair roads/containers/etc. by damage percentage ---
+        // Without a tower the repairer must handle all structure upkeep.
+        // Persist target so one structure gets fully repaired per trip.
+        const damaged = allStructures.filter(s =>
+            s.hits < s.hitsMax &&
+            s.structureType !== STRUCTURE_WALL &&
+            s.structureType !== STRUCTURE_RAMPART
+        );
+        if (damaged.length > 0) {
+            let target = roleRepairer._resolveTarget(creep, s =>
+                s.hits < s.hitsMax &&
+                s.structureType !== STRUCTURE_WALL &&
+                s.structureType !== STRUCTURE_RAMPART
+            );
+            if (!target) {
+                damaged.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
+                target = damaged[0];
+                roleRepairer._lockTarget(creep, target);
+            }
+            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+            }
+            creep.say('fix');
+            return;
         }
 
         // Nothing to repair — dump energy into storage or park near spawn
@@ -155,15 +149,15 @@ const roleRepairer = {
             if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' } });
             }
-            creep.say('🏦');
+            creep.say('bank');
             return;
         }
 
-        const spawns = cache.find(creep.room, FIND_MY_STRUCTURES).filter(s => s.structureType === STRUCTURE_SPAWN);
+        const spawns = myStructs.filter(s => s.structureType === STRUCTURE_SPAWN);
         if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 3)) {
             creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ffaa00' } });
         }
-        creep.say('💤');
+        creep.say('idle');
     },
 
     getEnergy: function (creep) {
@@ -175,7 +169,7 @@ const roleRepairer = {
             if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
-            creep.say('🏦');
+            creep.say('stg');
             return;
         }
 
@@ -192,7 +186,7 @@ const roleRepairer = {
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
-            creep.say('📦');
+            creep.say('ctn');
             return;
         }
 
@@ -207,7 +201,7 @@ const roleRepairer = {
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
-            creep.say('📦');
+            creep.say('src');
             return;
         }
 
@@ -220,7 +214,7 @@ const roleRepairer = {
         if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
             creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
         }
-        creep.say('⛏️');
+        creep.say('mine');
     },
 
     hasWork: function (creep) {
