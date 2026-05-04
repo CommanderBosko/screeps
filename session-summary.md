@@ -4,6 +4,56 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-05-03 — Repairer Full-Load Lock, Tower-Fill Removal, Target-Switch Fix
+
+**Duration Estimate**: Single focused session (1 commit)
+**Session Focus**: Fix the repairer so it commits its entire energy load to one barrier per trip and never dumps energy into towers.
+
+### What Was Accomplished
+
+**Root cause identified and fixed — `_resolveTarget` cleared the lock at HP cap:**
+- The old `_resolveTarget` helper cleared `repairTarget` the moment a barrier reached the RCL cap, causing the repairer to re-sort and pick a new target mid-trip. Fixed by replacing the cap-check with a simple `Game.getObjectById` lookup — the lock is now cleared only when the structure is destroyed (null return).
+
+**Full-load commitment enforced (`getUsedCapacity() === 0`):**
+- The store-empty flip was using `creep.store[RESOURCE_ENERGY] === 0`, which is equivalent but was paired with logic that allowed early target switching. Normalized to `getUsedCapacity() === 0` with a comment making the intent explicit: the full energy load stays committed to repair until the store is empty, then refuel.
+
+**Tower-fill block removed from `doRepair`:**
+- The repairer was calling `transfer()` on towers below 50% capacity, which immediately emptied its store and sent it back to harvest on every trip without doing any barrier repair. Harvesters and builders already handle tower fill. The block was deleted; the repairer now ignores tower energy levels entirely.
+
+**`say('wall')` restored to `say('🧱')`:**
+- The emoji was removed in a previous refactor. Restored in the barrier repair branch.
+
+**Helper methods clarified:**
+- `_resolveTarget(creep, isValid)` — validates a persisted target ID; clears it only on destruction, not on reaching the HP cap.
+- `_lockTarget(creep, target)` — thin wrapper for setting `creep.memory.repairTarget`.
+- These replace scattered inline target-ID management in `doRepair`.
+
+### Files Changed
+
+- `src/role.repairer.js` — Removed tower-fill block; fixed `_resolveTarget` to not clear on HP cap; normalized store-empty check to `getUsedCapacity() === 0`; restored `say('🧱')`; extracted `_lockTarget` helper
+
+### Commits This Session
+
+- `338ed11` — Repairer overhaul: full-load target lock, tower-fill removed, wall say restored
+
+### Decisions Made
+
+- **Do not clear `repairTarget` when the barrier reaches the HP cap** — clearing mid-trip caused the repairer to re-sort every tick once the current target hit cap but the store was still full. The correct moment to pick a new target is at the start of the next energy load (store empty), not when a structure crosses a threshold.
+- **Repairer must not fill towers** — the transfer block was architecturally wrong; it made the repairer compete with harvesters/builders for a job they already do and guaranteed the repairer never reached its assigned barrier on any trip where a tower was below 50%.
+
+### Issues Encountered
+
+- None; isolated to `role.repairer.js` with no interface changes.
+
+### Remaining / Next Session
+
+- Observe repairer in live game: confirm it travels to one barrier per trip and stays until store is empty
+- Verify no tower-fill behavior remains (repairer should never `transfer` to a tower)
+- Continue monitoring RCL 5 unlock: storage, 2nd tower, link network, hauler count collapse to 1
+- Watch `desiredUpgraders()` scale as storage fills
+
+---
+
 ## Session: 2026-05-01 — Invader Core-Gated Defender & RCL 5 Readiness Assessment
 
 **Duration Estimate**: Short focused session (1–2 commits)

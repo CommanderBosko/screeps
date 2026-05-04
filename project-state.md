@@ -1,10 +1,10 @@
 # Project State
 
-_Last updated: 2026-05-01_
+_Last updated: 2026-05-03_
 
 ## Current Project State
 
-The bot is in active mid-game development. Core economic and defensive systems are stable. This session simplified defender spawning to trigger only on invader core presence (towers handle normal NPC invaders reliably), stripped the ranged defender branch, and confirmed the bot is fully ready for tonight's RCL 5 unlock with no code changes required.
+The bot is in active mid-game development. Core economic and defensive systems are stable. This session fixed the repairer's fundamental bug: it was clearing the barrier target lock the moment a structure reached the HP cap (causing mid-trip re-sorting), and was dumping its entire energy store into towers before doing any barrier repair. Both issues are resolved — the repairer now commits its full energy load to one barrier per trip and ignores tower energy levels entirely.
 
 **What works:**
 - Full RCL 1–8 spawn logic with role prioritization and emergency fallback
@@ -27,6 +27,9 @@ The bot is in active mid-game development. Core economic and defensive systems a
 - **Repairer barrier caps**: RCL 1–3 → 10k; RCL 4–5 → 50k; RCL 6–7 → 200k/1M; RCL 8 → 5M; `barrierCap()` exported
 - **Repairer spawn gate**: demand-driven; only spawns when emergency rampart (<500 HP) exists, or barriers below cap, or non-barrier damage with no energized tower
 - Repairer hasTower bug fixed: gate now checks `hasTowerWithEnergy` (not just `hasTower`)
+- **Repairer target-lock bug fixed**: `_resolveTarget` now clears the lock only when the structure is destroyed (`Game.getObjectById` returns null), not when it reaches the HP cap — eliminates mid-trip target switching
+- **Repairer tower-fill removed**: the `transfer()` to towers block deleted from `doRepair`; harvesters and builders handle tower fill; the old block immediately emptied the repairer's store before any barrier repair could happen
+- **Repairer store-empty check normalized**: uses `getUsedCapacity() === 0`; full energy load is committed to repair before refueling
 - **Tower simplified**: handles only emergency ramparts (< 500 HP) and non-barrier structure repair
 - **Defender spawn gated on invader core**: defenders only spawn when `STRUCTURE_INVADER_CORE` is detected; towers handle normal NPC creep waves reliably before a defender can finish spawning
 - **Defender melee-only**: ranged branch removed; `role.defender.js` targets invader cores first, falls back to nearest hostile creep; retreat to rampart at 40% HP retained
@@ -68,6 +71,8 @@ The bot is in active mid-game development. Core economic and defensive systems a
 
 ## Recent Decisions
 
+- **Repairer target lock cleared only on destruction** — clearing the lock at HP cap caused the repairer to re-sort every tick once the current target hit cap but the store was still full; the correct moment to pick a new target is at the start of the next energy load (store empty).
+- **Repairer must not fill towers** — the old transfer block made the repairer compete with harvesters/builders for a job they already do, and guaranteed the repairer never reached its assigned barrier on any trip where a tower was below 50%. Removed entirely.
 - **Invader core-gated defender spawn** — towers kill NPC invaders before a defender finishes spawning (minimum 190e body takes multiple ticks); spawning defenders for ordinary creep waves wasted energy and occupied the spawn. Invader cores require a melee attacker since towers cannot target structures — the core is the actual threat.
 - **Melee-only defender** — the ranged variant (for healer-accompanied raids) added complexity without frequent payoff; removed to simplify the spawn path. Can be re-added if player raids with healers become common.
 - **RCL-tiered barrier caps** — repairing to hitsMax (300M) at low RCL wastes repairer time; caps scaled with RCL ensure barriers are defensively adequate without over-investing; `barrierCap()` is the single source of truth used in both repairer and spawn gate.
@@ -93,12 +98,13 @@ The bot is in active mid-game development. Core economic and defensive systems a
 
 ## Next Steps
 
-1. Observe RCL 5 unlock tonight: confirm storage is placed, 2nd tower construction site appears, link network activates, and hauler count collapses to 1.
-2. Watch `desiredUpgraders()` activate once storage is built; upgrader count should shift at 50k/150k/300k storage thresholds.
-3. Monitor barrier HP trending toward 50k (RCL 4–5 cap); confirm repairer does not spawn when towers have energy and nothing needs repair.
-4. Verify invader core detection in live game: defender spawns only when a core is present.
-5. If player raids with healers become a problem, re-add the ranged defender variant.
-6. Set `Memory.remoteRooms = { 'W1N1': ['W2N1'] }` (example) and watch remote miner in live game.
-7. At RCL 6, verify mineral harvester spawns and deposits to terminal.
-8. Verify stamp planner hub tile selection on current room.
-9. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
+1. Observe repairer in live game: confirm it travels to one barrier per trip and stays until store is empty; confirm it never calls `transfer` on a tower.
+2. Continue monitoring RCL 5 unlock: storage placed, 2nd tower built, link network activates, hauler count collapses to 1.
+3. Watch `desiredUpgraders()` activate once storage is built; upgrader count should shift at 50k/150k/300k storage thresholds.
+4. Monitor barrier HP trending toward 50k (RCL 4–5 cap); confirm demand-based repairer spawn gate still correct.
+5. Verify invader core detection in live game: defender spawns only when a core is present.
+6. If player raids with healers become a problem, re-add the ranged defender variant.
+7. Set `Memory.remoteRooms = { 'W1N1': ['W2N1'] }` (example) and watch remote miner in live game.
+8. At RCL 6, verify mineral harvester spawns and deposits to terminal.
+9. Verify stamp planner hub tile selection on current room.
+10. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.

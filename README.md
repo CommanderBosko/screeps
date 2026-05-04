@@ -111,9 +111,9 @@ src/
   role.hauler.js         — RCL 4+ carrier: pulls from fullest container/link, delivers to spawn/extensions/towers
   role.upgrader.js       — Withdraw energy from container/link, upgrade controller; parks near ctrl at RCL 4+
   role.builder.js        — Build construction sites in priority order, then fill towers/spawns
-  role.repairer.js       — Fill towers first; raise barriers to maxHits (tower present); roads/containers only (no tower)
+  role.repairer.js       — Raise barriers to RCL-tiered cap (tower present, full-load lock per barrier); roads/containers only (no tower)
   role.tower.js          — Attack > heal > emergency ramparts (< 500 HP) > non-barrier structure repair
-  role.defender.js       — Melee (rampart-hold) or ranged (healer squads) defender, spawned reactively
+  role.defender.js       — Melee-only defender; spawned on invader core detection; targets core first, falls back to hostile creeps
   role.scout.js          — Lightweight [MOVE] creep, records room data; counts by homeRoom; 1500t cooldown
   role.claimer.js        — Claims target room controller
   role.pioneer.js        — Multi-role bootstrap creep for new rooms (build spawn, mine, upgrade)
@@ -125,6 +125,14 @@ push.js                  — Upload script: reads src/*.js and POSTs to Screeps 
 ```
 
 ## Recent Changes
+
+### 2026-05-03 — Repairer Full-Load Lock, Tower-Fill Removal, Target-Switch Fix
+
+- `_resolveTarget` rewritten: target lock is now cleared only when the structure is destroyed (`Game.getObjectById` returns null), not when it reaches the HP cap — eliminates mid-trip target switching that was preventing any single barrier from being fully repaired
+- Tower-fill block (`transfer()` to towers below 50%) removed from `doRepair`; the old block emptied the repairer's store immediately on arrival, sending it back to harvest before reaching any barrier; harvesters and builders own tower fill
+- Store-empty flip normalized to `getUsedCapacity() === 0` with explicit comment: full energy load is committed to repair before refueling
+- `say('🧱')` restored in the barrier repair branch
+- `_lockTarget` helper extracted; `_resolveTarget` and `_lockTarget` replace scattered inline target-ID management
 
 ### 2026-05-01 — Invader Core-Gated Defender, Melee-Only Body, RCL 5 Readiness
 
