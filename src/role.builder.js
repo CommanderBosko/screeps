@@ -116,7 +116,7 @@ const roleBuilder = {
 
         // Storage first (don't compete with miners for container energy)
         const storage = creep.room.storage;
-        if (storage && storage.store[RESOURCE_ENERGY] > 2000) {
+        if (storage && storage.store[RESOURCE_ENERGY] > 500) {
             if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }

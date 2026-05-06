@@ -2,7 +2,6 @@ const roleHarvester = require('role.harvester');
 const roleUpgrader = require('role.upgrader');
 const roleBuilder = require('role.builder');
 const roleRepairer = require('role.repairer');
-const { barrierCap } = roleRepairer;
 const roleMiner = require('role.miner');
 const roleClaimer = require('role.claimer');
 const roleDefender = require('role.defender');
@@ -82,9 +81,7 @@ function runLinks(room) {
 function runTowers() {
     for (const roomName in Game.rooms) {
         const room = Game.rooms[roomName];
-        const towers = cache.find(room, FIND_MY_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_TOWER);
-        for (const tower of towers) towerLogic.run(tower);
+        for (const tower of cache.getTowers(room)) towerLogic.run(tower);
     }
 }
 
@@ -99,8 +96,7 @@ function checkSafeMode() {
         );
         if (dangerous.length === 0) continue;
 
-        const towers = cache.find(room, FIND_MY_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_TOWER);
+        const towers = cache.getTowers(room);
         const towerEnergy = towers.reduce((sum, t) => sum + t.store[RESOURCE_ENERGY], 0);
         if (towers.length === 0 || towerEnergy < 500) {
             room.controller.activateSafeMode();
@@ -139,10 +135,9 @@ function checkAttackComplete() {
     const room = Game.rooms[Memory.attackTarget];
     if (!room) return;
 
-    const hostiles = room.find(FIND_HOSTILE_CREEPS);
-    const dangerStructures = room.find(FIND_HOSTILE_STRUCTURES, {
-        filter: s => s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_TOWER
-    });
+    const hostiles = cache.find(room, FIND_HOSTILE_CREEPS);
+    const dangerStructures = cache.find(room, FIND_HOSTILE_STRUCTURES)
+        .filter(s => s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_TOWER);
 
     if (hostiles.length === 0 && dangerStructures.length === 0) {
         console.log('🏴 ' + Memory.attackTarget + ' cleared — queuing for claim.');
@@ -528,13 +523,21 @@ function spawnForRoom(spawn) {
                 c.memory.targetRoom === remoteRoomName
             ).length;
             if (minersForRemote < 2 && room.energyAvailable >= 200) {
-                // Scale body: prioritize WORK parts for maximum mining throughput
+                // Remote miners must carry energy home — balance WORK for throughput
+                // with CARRY so each trip is worthwhile. Full road speed (1M per 2 non-M).
+                // Body costs:
+                //   3W+6C+5M = 300+300+250 = 850
+                //   3W+4C+4M = 300+200+200 = 700
+                //   2W+3C+3M = 200+150+150 = 500
+                //   1W+2C+2M = 100+100+100 = 300
+                //   1W+1C+1M = 100+ 50+ 50 = 200
                 let remoteMinerBody;
                 const re = room.energyAvailable;
-                if (re >= 700)      remoteMinerBody = [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];  // 4W+1C+3M = 700
-                else if (re >= 550) remoteMinerBody = [WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];        // 3W+1C+3M = 550
-                else if (re >= 400) remoteMinerBody = [WORK, WORK, CARRY, MOVE, MOVE];                    // 2W+1C+2M = 400
-                else                remoteMinerBody = [WORK, CARRY, MOVE, MOVE];                          // 1W+1C+2M = 200
+                if (re >= 850)      remoteMinerBody = [WORK, WORK, WORK, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE];
+                else if (re >= 700) remoteMinerBody = [WORK, WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE];
+                else if (re >= 500) remoteMinerBody = [WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE];
+                else if (re >= 300) remoteMinerBody = [WORK, CARRY, CARRY, MOVE, MOVE];
+                else                remoteMinerBody = [WORK, CARRY, MOVE];
                 // Assign source index round-robin based on miner slot
                 const sourceIdx = minersForRemote % 2;
                 spawn.spawnCreep(remoteMinerBody, 'RemoteMiner' + Game.time, {
@@ -571,7 +574,6 @@ function spawnForRoom(spawn) {
     const upgraderMaxFinal = desiredUpgraders(room);
     // Gate repairer on actual repair demand — idle repairers waste energy.
     const allStructsCached = cache.find(room, FIND_STRUCTURES);
-    const repairerCap = barrierCap(rcl >= 1 ? rcl : 1);
     const roomTowers = roomMyStructs.filter(s => s.structureType === STRUCTURE_TOWER);
     const hasTowerWithEnergy = roomTowers.some(t => t.store[RESOURCE_ENERGY] > 0);
     const needsRepair = (
@@ -584,18 +586,25 @@ function spawnForRoom(spawn) {
             s.structureType !== STRUCTURE_WALL &&
             s.structureType !== STRUCTURE_RAMPART
         )) ||
-        // Barriers below the RCL tiered cap — towers can't raise barriers this high on their own
+        // Barriers below barrierCap — matches the hasWork() check in role.repairer.js.
+        // Towers alone cannot raise barriers to barrierCap; the repairer is needed for that.
         allStructsCached.some(s =>
             (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) &&
-            s.hits < repairerCap
+            s.hits < cache.barrierCap(rcl)
         )
     );
     const repairerMax = needsRepair ? 1 : 0;
-    for (const [role, max] of [['builder', builderMax], ['upgrader', upgraderMaxFinal], ['repairer', repairerMax]]) {
+    // Builder and repairer use standard body selection.
+    // Upgrader uses infrastructure-aware body selection — see spawnUpgrader().
+    for (const [role, max] of [['builder', builderMax], ['repairer', repairerMax]]) {
         if (roomCreeps(role, rn) < max && room.energyAvailable >= 200) {
             spawnStandard(spawn, role, rn);
             return;
         }
+    }
+    if (roomCreeps('upgrader', rn) < upgraderMaxFinal && room.energyAvailable >= 200) {
+        spawnUpgrader(spawn, rn);
+        return;
     }
 
     // Scout — only when we have GCL headroom and are ready to expand (RCL 4+)
@@ -691,6 +700,8 @@ function getBody(role, energy) {
             // Breakpoints match exact body costs (not the energy tier labels).
             // RCL 8 cap: controller accepts at most 15 WORK-parts/tick of upgrade input.
             // Top tier is 12W — safely under cap. Do NOT add a tier with more than 15W.
+            // NOTE: Only used when infrastructure-aware spawning is not applicable (fallback).
+            // See getUpgraderBody() for the full infrastructure-aware selector.
             if (energy >= 1500) return [WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
                                         CARRY,
                                         MOVE, MOVE, MOVE, MOVE, MOVE];      // 12W+1C+5M = 1500 (RCL8-safe: 12W < 15W cap)
@@ -764,6 +775,45 @@ function getBody(role, energy) {
     }
 }
 
+// Infrastructure-aware upgrader body selector.
+// hasAdjacentEnergy = true  → controller link or controller-adjacent container exists.
+//   In this case the upgrader is nearly stationary; maximize WORK for throughput.
+//   These are the same tiers as getBody('upgrader', ...) above.
+// hasAdjacentEnergy = false → upgrader must travel to fetch energy itself.
+//   Balanced WORK/CARRY so it doesn't spend 70-80% of its time walking empty.
+//   Road speed maintained: 1 MOVE per 2 non-MOVE parts.
+// RCL 8 cap: controller accepts at most 15 WORK-parts/tick. All tiers stay under that.
+function getUpgraderBody(energy, hasAdjacentEnergy) {
+    if (hasAdjacentEnergy) {
+        // WORK-heavy tiers — stationary upgrader parked next to link/container
+        if (energy >= 1500) return [WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+                                    CARRY,
+                                    MOVE, MOVE, MOVE, MOVE, MOVE];      // 12W+1C+5M = 1500
+        if (energy >= 1050) return [WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+                                    CARRY,
+                                    MOVE, MOVE, MOVE, MOVE];            // 8W+1C+4M = 1050
+        if (energy >= 700)  return [WORK, WORK, WORK, WORK, WORK,
+                                    CARRY,
+                                    MOVE, MOVE, MOVE];                  // 5W+1C+3M = 700
+        if (energy >= 450)  return [WORK, WORK, WORK, CARRY, MOVE, MOVE];  // 3W+1C+2M = 450
+        return [WORK, CARRY, MOVE];                                         // 1W+1C+1M = 200
+    } else {
+        // Balanced tiers — self-sufficient upgrader that must travel for energy.
+        // Equal WORK/CARRY so carry capacity matches harvesting cadence; full road speed.
+        if (energy >= 1300) return [WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+                                    CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+                                    MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];    // 7W+6C+6M = 1300
+        if (energy >= 1000) return [WORK, WORK, WORK, WORK, WORK,
+                                    CARRY, CARRY, CARRY, CARRY, CARRY,
+                                    MOVE, MOVE, MOVE, MOVE, MOVE];          // 5W+5C+5M = 1000
+        if (energy >= 600)  return [WORK, WORK, WORK,
+                                    CARRY, CARRY, CARRY,
+                                    MOVE, MOVE, MOVE];                      // 3W+3C+3M = 600
+        if (energy >= 400)  return [WORK, WORK, CARRY, CARRY, MOVE, MOVE]; // 2W+2C+2M = 400
+        return [WORK, CARRY, MOVE];                                         // 1W+1C+1M = 200
+    }
+}
+
 // Roles that require a source assignment for positioning / work targeting.
 // Haulers pull from receiver links/containers by position — no sourceId needed.
 const ROLES_NEEDING_SOURCE = new Set(['harvester', 'upgrader', 'builder', 'repairer']);
@@ -800,6 +850,44 @@ function spawnStandard(spawn, role, homeRoom) {
         if (sourceId) memory.sourceId = sourceId;
     }
     spawn.spawnCreep(targetBody, name, { memory });
+}
+
+// Infrastructure-aware upgrader spawn.
+// Checks for a controller link (receiver link within range 3 of controller)
+// or a controller-adjacent container, then picks the appropriate body tier.
+// Falls back to balanced body when neither exists (RCL 1-4 without planner container).
+function spawnUpgrader(spawn, homeRoom) {
+    const room = spawn.room;
+    const ctrl = room.controller;
+
+    // Detect adjacent energy infrastructure
+    let hasAdjacentEnergy = false;
+    if (ctrl) {
+        // 1. Receiver link within range 3 of controller (the upgrader link pattern)
+        const { receiverLinks } = cache.getLinkRoles(room);
+        if (receiverLinks.some(l => l.pos.inRangeTo(ctrl, 3))) {
+            hasAdjacentEnergy = true;
+        }
+        // 2. Container within range 3 of controller (placed by planner at RCL 3+)
+        if (!hasAdjacentEnergy) {
+            const ctrlContainers = ctrl.pos.findInRange(FIND_STRUCTURES, 3, {
+                filter: s => s.structureType === STRUCTURE_CONTAINER
+            });
+            if (ctrlContainers.length > 0) hasAdjacentEnergy = true;
+        }
+    }
+
+    // Apply SPAWN_BUFFER cap — upgraders are non-income, keep energy reserve for emergencies
+    const budgetCap = Math.max(200, room.energyCapacityAvailable - SPAWN_BUFFER);
+    const body = getUpgraderBody(budgetCap, hasAdjacentEnergy);
+    const cost = bodyCost(body);
+
+    if (room.energyAvailable < cost) return;
+
+    const sourceId = cache.pickSource(room);
+    const memory = { role: 'upgrader', homeRoom };
+    if (sourceId) memory.sourceId = sourceId;
+    spawn.spawnCreep(body, 'Upgrader' + Game.time, { memory });
 }
 
 module.exports.loop = function () {

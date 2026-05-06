@@ -99,14 +99,20 @@ const cache = {
     }
 };
 
-// Returns the HP cap for walls/ramparts at the given RCL.
-// Repairers and towers use this to avoid dumping energy into maxing defenses.
-cache.getWallTarget = function (room) {
-    const rcl = room.controller ? room.controller.level : 1;
-    if (rcl >= 8) return 300000;
-    if (rcl >= 6) return 150000;
+// Returns all STRUCTURE_TOWER objects in a room, cached per tick.
+cache.getTowers = function (room) {
+    return this.find(room, FIND_MY_STRUCTURES).filter(s => s.structureType === STRUCTURE_TOWER);
+};
+
+// Returns the HP cap for walls and ramparts at the given RCL.
+// Repairing to hitsMax (300M) is wasteful — use tiered targets instead.
+// Shared by role.repairer and the spawn needsRepair gate in main.js.
+cache.barrierCap = function (rcl) {
+    if (rcl >= 8) return 5000000;
+    if (rcl >= 7) return 1000000;
+    if (rcl >= 6) return 200000;
     if (rcl >= 4) return 50000;
-    return 10000;
+    return 10000;  // RCL 1–3
 };
 
 module.exports = cache;

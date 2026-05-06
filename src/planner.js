@@ -252,7 +252,7 @@ function countType(room, structureType) {
 }
 
 function totalSites(room) {
-    return room.find(FIND_CONSTRUCTION_SITES).length;
+    return cache.find(room, FIND_CONSTRUCTION_SITES).length;
 }
 
 // ─── Apply stamp ───────────────────────────────────────────────────────────
@@ -490,10 +490,10 @@ function placeRoads(room, hub) {
             }
         }
     }
-    for (const road of room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_ROAD })) {
+    for (const road of cache.find(room, FIND_STRUCTURES).filter(s => s.structureType === STRUCTURE_ROAD)) {
         costs.set(road.pos.x, road.pos.y, 1);
     }
-    for (const site of room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.structureType === STRUCTURE_ROAD })) {
+    for (const site of cache.find(room, FIND_CONSTRUCTION_SITES).filter(s => s.structureType === STRUCTURE_ROAD)) {
         costs.set(site.pos.x, site.pos.y, 1);
     }
 

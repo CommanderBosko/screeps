@@ -1,14 +1,5 @@
 const cache = require('cache');
-
-// Returns the HP cap for walls and ramparts at the given RCL.
-// Repairing to hitsMax (300M) is wasteful — use tiered targets instead.
-function barrierCap(rcl) {
-    if (rcl >= 8) return 5000000;
-    if (rcl >= 7) return 1000000;
-    if (rcl >= 6) return 200000;
-    if (rcl >= 4) return 50000;
-    return 10000;  // RCL 1–3
-}
+const barrierCap = cache.barrierCap;
 
 const roleRepairer = {
     run: function (creep) {
@@ -38,7 +29,7 @@ const roleRepairer = {
                         return;
                     }
                 }
-                creep.say('idle');
+                creep.say('💤');
             }
         }
     },
@@ -59,9 +50,10 @@ const roleRepairer = {
     },
 
     doRepair: function (creep) {
-        const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
-        const allStructures = cache.find(creep.room, FIND_STRUCTURES);
-        const cap = barrierCap(creep.room.controller ? creep.room.controller.level : 1);
+        const room = creep.room;
+        const rcl = room.controller ? room.controller.level : 1;
+        const myStructs = cache.find(room, FIND_MY_STRUCTURES);
+        const allStructures = cache.find(room, FIND_STRUCTURES);
         const roomTowers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER);
         const hasTower = roomTowers.length > 0;
 
@@ -96,13 +88,14 @@ const roleRepairer = {
                 : null;
 
             if (!barrierTarget) {
+                const cap = barrierCap(rcl);
                 const weakBarriers = allStructures.filter(s =>
                     (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
                     s.hits < cap
                 );
                 if (weakBarriers.length === 0) {
                     creep.memory.repairTarget = null;
-                    creep.say('idle');
+                    creep.say('💤');
                     return;
                 }
                 weakBarriers.sort((a, b) => a.hits - b.hits);
@@ -117,7 +110,7 @@ const roleRepairer = {
             return;
         }
 
-        // --- No tower: repair roads/containers/etc. by damage percentage ---
+        // --- No tower: repair roads/containers/etc. by damage percentage first ---
         // Without a tower the repairer must handle all structure upkeep.
         // Persist target so one structure gets fully repaired per trip.
         const damaged = allStructures.filter(s =>
@@ -143,6 +136,29 @@ const roleRepairer = {
             return;
         }
 
+        // --- No tower: repair barriers below barrierCap when no other work remains ---
+        const cap = barrierCap(rcl);
+        const weakBarriersNoTower = allStructures.filter(s =>
+            (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
+            s.hits < cap
+        );
+        if (weakBarriersNoTower.length > 0) {
+            let target = roleRepairer._resolveTarget(creep, s =>
+                (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
+                s.hits < cap
+            );
+            if (!target) {
+                weakBarriersNoTower.sort((a, b) => a.hits - b.hits);
+                target = weakBarriersNoTower[0];
+                roleRepairer._lockTarget(creep, target);
+            }
+            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#aaaaaa' } });
+            }
+            creep.say('🧱');
+            return;
+        }
+
         // Nothing to repair — dump energy into storage or park near spawn
         const storage = creep.room.storage;
         if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
@@ -157,7 +173,7 @@ const roleRepairer = {
         if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 3)) {
             creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ffaa00' } });
         }
-        creep.say('idle');
+        creep.say('💤');
     },
 
     getEnergy: function (creep) {
@@ -165,7 +181,7 @@ const roleRepairer = {
 
         // Prefer storage (don't compete for containers)
         const storage = creep.room.storage;
-        if (storage && storage.store[RESOURCE_ENERGY] > 1000) {
+        if (storage && storage.store[RESOURCE_ENERGY] > 300) {
             if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
             }
@@ -218,11 +234,12 @@ const roleRepairer = {
     },
 
     hasWork: function (creep) {
-        const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
+        const room = creep.room;
+        const rcl = room.controller ? room.controller.level : 1;
+        const myStructs = cache.find(room, FIND_MY_STRUCTURES);
         const towers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER);
-        const hasTower = towers.length > 0;
         const hasTowerWithEnergy = towers.some(t => t.store[RESOURCE_ENERGY] > 0);
-        const allStructures = cache.find(creep.room, FIND_STRUCTURES);
+        const allStructures = cache.find(room, FIND_STRUCTURES);
 
         // Emergency ramparts always count as work
         if (allStructures.some(s => s.structureType === STRUCTURE_RAMPART && s.hits < 500)) return true;
@@ -235,10 +252,10 @@ const roleRepairer = {
             s.structureType !== STRUCTURE_RAMPART
         )) return true;
 
-        // Any barrier below the RCL cap counts as work when a tower exists
-        // (towers alone cannot raise barriers to the tiered cap)
-        const cap = barrierCap(creep.room.controller ? creep.room.controller.level : 1);
-        if (hasTower && allStructures.some(s =>
+        // Any barrier below barrierCap counts as work — tower presence determines priority
+        // but the repairer handles barriers regardless of whether a tower exists.
+        const cap = barrierCap(rcl);
+        if (allStructures.some(s =>
             (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) &&
             s.hits < cap
         )) return true;
@@ -248,4 +265,3 @@ const roleRepairer = {
 };
 
 module.exports = roleRepairer;
-module.exports.barrierCap = barrierCap;
