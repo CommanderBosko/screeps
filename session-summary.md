@@ -4,6 +4,84 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-05-06 — Infrastructure-Aware Upgrader, barrierCap Consolidation, Remote Miner Carry, CPU Audit
+
+**Duration Estimate**: Single focused session (1 commit)
+**Session Focus**: Fix seven systemic issues: upgrader body selection now accounts for whether energy infrastructure exists near the controller; barrierCap() is consolidated into cache.js; remote miners carry energy home instead of dropping it; and several raw room.find() calls are routed through cache.find().
+
+### What Was Accomplished
+
+**Infrastructure-aware upgrader body (`main.js`):**
+- Added `getUpgraderBody(energy, hasAdjacentEnergy)` with two distinct body tracks: WORK-heavy (stationary) when a receiver link within range 3 of the controller or a controller-adjacent container is detected; balanced WORK/CARRY when neither exists and the upgrader must fetch energy itself.
+- Added `spawnUpgrader(spawn, homeRoom)` which detects infrastructure (via `cache.getLinkRoles()` and `ctrl.pos.findInRange(FIND_STRUCTURES, 3)`) before selecting the body tier. Upgrader spawning split out of the generic role loop so it can use the infrastructure check.
+- Previously, all upgraders received a WORK-heavy body regardless of RCL; at low RCL with no link or container near the controller, this meant 70–80% of tick time spent walking empty.
+
+**Repairer spawn gate fixed — mismatched barrierCap (`main.js`):**
+- The `needsRepair` gate in `main.js` was importing `barrierCap` from `role.repairer.js` (via a destructured export) and using it correctly in the barrier predicate. However, after `barrierCap` was moved to `cache.js`, the import was left dangling. Fixed by replacing the local `repairerCap` variable with a direct call to `cache.barrierCap(rcl)`.
+- Repairers were silently not spawning whenever barriers existed below the cap because the gate had stale logic.
+
+**`barrierCap()` consolidated into `cache.js` (Issues 1 & 2):**
+- Removed the local `barrierCap` function from `role.repairer.js` (was duplicated there and in `main.js`).
+- Deleted the now-unused `cache.getWallTarget()` function (previous tier table; superseded by `barrierCap`).
+- `cache.barrierCap(rcl)` is now the single source of truth used by `role.repairer.js`, `main.js` (spawn gate), and any future callers.
+- `module.exports.barrierCap = barrierCap` export removed from `role.repairer.js`; callers updated to `cache.barrierCap`.
+
+**Remote miner deposits to storage instead of dropping (`role.remoteMiner.js`):**
+- Replaced the drop-on-full pattern with the standard two-flag memory pattern (`returning = false/true`).
+- When full, the miner travels home via `findExitTo` and deposits to storage (falls back to spawn/extensions if no storage; drops if nowhere to deposit).
+- Body tiers rebalanced: much heavier CARRY (3W+6C+5M at 850e, 3W+4C+4M at 700e, etc.) so each home trip is worthwhile.
+- Comment block updated to describe the returning pattern.
+
+**`cache.getTowers(room)` helper added (`cache.js`, `main.js`):**
+- Extracted the repeated `cache.find(room, FIND_MY_STRUCTURES).filter(s => s.structureType === STRUCTURE_TOWER)` pattern into `cache.getTowers(room)`.
+- `runTowers()` and `checkSafeMode()` in `main.js` updated to use it — two call sites simplified.
+
+**Storage floors lowered:**
+- `role.builder.js`: storage withdraw floor lowered from >2000 to >500 energy; builders can draw from storage earlier.
+- `role.repairer.js`: storage withdraw floor lowered from >1000 to >300 energy; repairers are not starved from storage at low reserves.
+
+**`checkAttackComplete()` cache fix (`main.js`):**
+- Replaced two raw `room.find()` calls in `checkAttackComplete()` with `cache.find()` to keep hostile and structure queries consistent with the tick-local cache.
+
+**Planner cache routing (`planner.js`):**
+- `totalSites()`: raw `room.find(FIND_CONSTRUCTION_SITES)` replaced with `cache.find()`.
+- `placeRoads()`: two raw `room.find()` calls (roads and road sites) replaced with `cache.find()`.
+
+### Files Changed
+
+- `src/cache.js` — Added `cache.getTowers(room)`; replaced `cache.getWallTarget()` with `cache.barrierCap(rcl)` (moved from role.repairer.js; updated tier values for RCL 6/7/8)
+- `src/main.js` — Added `getUpgraderBody()` and `spawnUpgrader()`; removed `barrierCap` import from role.repairer; spawn gate now calls `cache.barrierCap(rcl)` directly; `runTowers()` and `checkSafeMode()` use `cache.getTowers()`; `checkAttackComplete()` uses `cache.find()`; upgrader removed from generic role loop and routed through `spawnUpgrader()`
+- `src/planner.js` — `totalSites()` and `placeRoads()` raw `room.find()` calls replaced with `cache.find()`
+- `src/role.builder.js` — Storage withdraw floor lowered from 2000 to 500
+- `src/role.remoteMiner.js` — Two-flag returning pattern replaces drop-on-full; `doReturn()` and `doMine()` extracted; body tiers rebalanced for heavier CARRY
+- `src/role.repairer.js` — Local `barrierCap()` function removed; replaced with `const barrierCap = cache.barrierCap`; module.exports.barrierCap export removed; storage withdraw floor lowered from 1000 to 300; idle `say('idle')` replaced with `say('💤')` throughout; barrier repair block added for no-tower case
+
+### Commits This Session
+
+- `d576393` — feat: infrastructure-aware upgrader body, barrierCap consolidation, remote miner carry, CPU audit
+
+### Decisions Made
+
+- **Infrastructure-aware upgrader spawning** — a WORK-heavy upgrader parked away from any energy source wastes most of its life walking; the body selection must check whether a link or container is actually present near the controller before selecting the heavy tier. The detection check (link range 3 OR container range 3) matches where a stationary upgrader would actually stand.
+- **barrierCap into cache.js** — the function was duplicated across role.repairer.js (definition + export) and main.js (import + usage); a single canonical location in cache.js eliminates the synchronization risk and removes the inter-module export coupling.
+- **Remote miner must carry energy home** — dropping energy in a remote room with no hauler is waste; carrying it home and depositing to storage is net positive even though the body now has more CARRY. The heavier CARRY body means fewer, more valuable trips.
+- **Storage floors lowered** — the original floors (2000/1000) were overly conservative and prevented builders and repairers from using storage until it was well-stocked; lowering to 500/300 keeps non-income roles functional at low storage without meaningfully threatening the economic reserve.
+
+### Issues Encountered
+
+- The `barrierCap` import from `role.repairer` in `main.js` was left dangling after the function was moved to `cache.js` in a prior session, causing the repairer spawn gate to silently use an undefined function. The symptom was repairers not spawning when barriers needed repair.
+
+### Remaining / Next Session
+
+- Deploy and observe infrastructure-aware upgrader: at current RCL, confirm it receives a balanced WORK/CARRY body if no link/container is near the controller.
+- Watch repairer spawn gate now that barrierCap is correctly wired — confirm repairers spawn when barriers are below the RCL cap.
+- Observe remote miner returning home and depositing to storage; verify the heavier CARRY body means fewer trips with meaningful loads.
+- Continue monitoring RCL 5 unlock: storage placed, 2nd tower built, link network activates, hauler count collapses to 1.
+- Verify `desiredUpgraders()` scaling as storage fills post-RCL-5.
+- Test mineral harvester at RCL 6.
+
+---
+
 ## Session: 2026-05-03 — Repairer Full-Load Lock, Tower-Fill Removal, Target-Switch Fix
 
 **Duration Estimate**: Single focused session (1 commit)
