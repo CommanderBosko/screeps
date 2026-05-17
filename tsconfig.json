@@ -13,5 +13,6 @@
     "typeRoots": ["./node_modules/@types"],
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.js"]
+  "include": ["src/**/*.js"],
+  "exclude": ["watch.js", "push.js"]
 }
