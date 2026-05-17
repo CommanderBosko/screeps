@@ -4,6 +4,75 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-05-17 — TypeScript Setup, Hauler Spawn Deadlock Fix, Link-Mode Bootstrap
+
+**Duration Estimate**: Single focused session (3 commits)
+**Session Focus**: Eliminate all TypeScript lint errors, fix hauler spawn failures after links went live, and break the link-mode spawn deadlock where drained extensions prevented haulers from ever reaching the energy threshold needed to spawn.
+
+### What Was Accomplished
+
+**Full TypeScript checking enabled (`tsconfig.json`, `src/global.d.ts`):**
+- Added `"types": ["screeps", "node"]` to inject `@types/screeps` globals and suppress TS80001 "CommonJS module may be converted" hints everywhere.
+- Changed `moduleResolution` from `bundler` to `"node10"` — required for the `@types/node` injection to silence TS80001 across all CommonJS source files.
+- Added `"baseUrl": "./src"` so bare `require()` calls (e.g., `require('cache')`) resolve without diagnostics.
+- Added `"dom"` to `lib` array to expose `console` type (Screeps injects a browser-style console at runtime).
+- Created `src/global.d.ts` with ambient augmentations for all project-specific `CreepMemory`, `RoomMemory`, and `Memory` fields — type-merges with `@types/screeps` base interfaces.
+- Added JSDoc casts on `getObjectById()` call sites in `role.miner.js` and `role.hauler.js` to fix `_HasId` narrowing errors.
+- Removed stale `// @ts-nocheck` from `src/main.js` (was redundant since `checkJs: false`).
+- Added `.vscode/settings.json` with `"javascript.suggestionActions.enabled": false` to permanently suppress TS80001 suggestion lightbulbs in VS Code.
+
+**Emergency bootstrap checks receiver links (`src/main.js`):**
+- The emergency hauler bootstrap (150-energy `[CARRY,CARRY,MOVE]` spawn) was checking only containers for available energy. After links went live, energy went to receiver links instead of containers, so the bootstrap incorrectly found nothing and skipped the spawn.
+- Fixed: bootstrap now checks receiver links in addition to containers when determining whether energy is available to justify spawning a hauler.
+
+**Idle hauler top-up uses receiver links (`src/role.hauler.js`):**
+- In link mode, the idle top-up path was falling back to containers before trying receiver links. Since miners now fill source links (which drain into the receiver link), the receiver link is the primary energy source.
+- Fixed: idle top-up now pre-fills from receiver links before falling back to containers.
+
+**Link-mode hauler spawn deadlock broken (`src/main.js`):**
+- `spawnStandard` was waiting for `room.energyCapacityAvailable` before spawning — the full 800+ energy that the room can hold. In link mode, extensions drain constantly to spawn creeps; when no hauler exists to refill them, extensions stay empty and `energyAvailable` never reaches `energyCapacityAvailable`. The spawn gate never fires, so no hauler is ever spawned. Classic deadlock.
+- Fixed: in the hauler spawn path, `spawnStandard` now calls `getBody('hauler', room.energyAvailable)` instead of waiting for full capacity. A hauler spawns immediately at whatever energy is available (minimum 300). Extensions refill once the hauler is live.
+
+### Files Changed
+
+- `tsconfig.json` — `types: ["screeps", "node"]`; `moduleResolution: "node10"`; `baseUrl: "./src"`; `lib` includes `"dom"`
+- `src/global.d.ts` — New file: ambient `CreepMemory`, `RoomMemory`, `Memory` augmentations for all project-specific fields
+- `src/main.js` — Emergency bootstrap checks receiver links; link-mode hauler spawns from `energyAvailable` (not `energyCapacityAvailable`); `// @ts-nocheck` removed
+- `src/role.hauler.js` — Idle top-up pre-fills from receiver links before containers; JSDoc cast on `getObjectById`
+- `src/role.miner.js` — JSDoc casts on `getObjectById` calls
+- `.vscode/settings.json` — New file: `"javascript.suggestionActions.enabled": false` to suppress TS80001 in VS Code
+- `package.json` / `package-lock.json` — Added `@types/node` dev dependency
+
+### Commits This Session
+
+- `e42c5b8` — fix(types): enable full TypeScript checking for Screeps globals
+- `39f6dfc` — fix(hauler): restore spawning in link mode + suppress TS80001
+- `92d25a6` — fix(spawn): break link-mode hauler deadlock + suppress TS80001
+
+### Decisions Made
+
+- **Spawn hauler from `energyAvailable`, not `energyCapacityAvailable`** — the full-capacity wait is correct for most roles (one large creep beats two small ones on MMO), but for the hauler in link mode it creates a deadlock where drained extensions can never be refilled. The hauler is the only role where immediate availability at minimum cost breaks the circular dependency; all other roles still wait for full capacity.
+- **`moduleResolution: "node10"` over `"node"`** — `"node"` is the legacy alias for node10; using the explicit string avoids tooling ambiguity and correctly resolves `require()` calls in a CommonJS workspace.
+- **`global.d.ts` for ambient augmentations** — TypeScript's interface merging against `@types/screeps` base types is the correct approach for adding project-specific memory fields without forking the type package.
+- **`.vscode/settings.json` for TS80001** — the hint fires on every CommonJS `require()` call in a project that can never be converted to ESM (Screeps runtime does not support `import`). Suppressing at the workspace level is cleaner than per-file `@ts-ignore` comments scattered through all source files.
+
+### Issues Encountered
+
+- After link network went live, the emergency hauler bootstrap silently skipped spawn because it only checked containers — energy was now arriving via receiver links, not containers. The bootstrap was passing the "miners alive" gate but failing the "energy available" check.
+- `spawnStandard`'s full-capacity wait turned into a self-referential deadlock in link mode: hauler needed to exist before extensions could fill, but extensions needed to be full before a hauler would spawn.
+- TS80001 hints persisted after adding `@types/node` because `moduleResolution` was still `"bundler"` — the type injection only suppresses the hint when Node resolution is active.
+
+### Remaining / Next Session
+
+- Observe in live game: confirm haulers spawn immediately when link mode is active (no more deadlock after a hauler wipe)
+- Confirm receiver links are recognized by the bootstrap and idle top-up paths
+- Verify 600-energy miners are transferring energy to source links (not dropping to ground) — carried over from previous session
+- Monitor link network throughput with the full fix chain live
+- Continue watching RCL 5 unlock: 2nd tower, `desiredUpgraders()` as storage fills
+- Consider deleting `defense.js` (only chokepoint walls remain; planner owns all other placement)
+
+---
+
 ## Session: 2026-05-17 — Miner Link Delivery Fix, Emergency Hauler Bootstrap, watch.js, tsconfig Cleanup
 
 **Duration Estimate**: Single focused session (4 commits)

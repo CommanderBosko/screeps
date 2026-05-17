@@ -1,12 +1,16 @@
 # Project State
 
-_Last updated: 2026-05-17_
+_Last updated: 2026-05-17 (session 2)_
 
 ## Current Project State
 
-The bot is in active mid-game development. This session fixed the root cause of miners never filling source links (no CARRY parts on the 600-energy tier), added an emergency hauler bootstrap to break economy deadlocks, corrected the tsconfig to properly cover the plain JS codebase, and added `watch.js` for real-time console streaming. All changes have been deployed to the MMO server.
+The bot is in active mid-game development. Two sessions today: the first fixed source link delivery and added `watch.js`; the second eliminated all TypeScript lint errors and broke the link-mode hauler spawn deadlock. All changes are deployed to the MMO server and pushed to GitHub. Haulers are confirmed spawning and the console watcher shows no errors.
 
 **What works:**
+- **TypeScript checking**: `@types/screeps` + `@types/node` injected; `moduleResolution: "node10"`; `baseUrl: "./src"`; `lib: ["ES2017", "dom"]`; `src/global.d.ts` augments `CreepMemory`, `RoomMemory`, and `Memory` with all project-specific fields; JSDoc casts on `getObjectById` call sites; `.vscode/settings.json` suppresses TS80001 at workspace level
+- **Link-mode hauler spawn deadlock resolved**: hauler spawn path uses `room.energyAvailable` (not `energyCapacityAvailable`), so a hauler spawns at minimum 300 energy immediately after a wipe rather than waiting for extensions to fill (which required a hauler to exist — deadlock)
+- **Emergency bootstrap is link-aware**: checks receiver links in addition to containers for available energy; previously skipped spawn in link mode because energy was arriving via links not containers
+- **Idle hauler top-up is link-aware**: pre-fills from receiver links before falling back to containers
 - Full RCL 1–8 spawn logic with role prioritization and emergency fallback
 - Emergency guard correctly requires zero harvesters AND zero miners/haulers before firing
 - **Emergency hauler bootstrap**: 150-energy `[CARRY,CARRY,MOVE]` spawns before the normal hauler block whenever miners are alive but no haulers exist — breaks permanent economy deadlock after hauler wipe
@@ -45,8 +49,8 @@ The bot is in active mid-game development. This session fixed the root cause of 
 - **tsconfig.json**: correctly targets `src/**/*.js` with `allowJs: true`, `commonjs`/`node` module resolution; utility scripts excluded
 
 **In progress / known fragile:**
-- Miner link delivery fix just deployed — not yet verified in live game that miners are filling source links
-- Emergency hauler bootstrap just deployed — not yet observed firing in a real deadlock scenario
+- Link-mode hauler fix deployed and confirmed working (haulers spawning, no console errors) but a deliberate hauler-wipe test has not been run
+- Miner link delivery fix deployed — not yet confirmed in live game that miners are filling source links (no drops to ground)
 - Remote miner behavior with returning pattern not yet fully verified in live game
 - Mineral harvester untested in live game (requires RCL 6)
 - Multi-room expansion untested at scale
@@ -77,6 +81,10 @@ The bot is in active mid-game development. This session fixed the root cause of 
 
 ## Recent Decisions
 
+- **Spawn hauler from `energyAvailable` in link mode** — the full-capacity wait creates a deadlock unique to the hauler: no hauler → extensions drain → energy never reaches cap → no hauler spawns. All other roles still wait for full capacity. The `getBody('hauler', room.energyAvailable)` call produces a minimum-viable hauler immediately; it will be recycled and replaced by a full-capacity hauler once extensions refill.
+- **`moduleResolution: "node10"` to suppress TS80001** — the hint fires on `require()` calls when module resolution cannot locate `@types/node`; `"node10"` is the correct resolution strategy for a CommonJS workspace.
+- **`src/global.d.ts` for project memory fields** — TypeScript's declaration merging against `@types/screeps` base interfaces is the correct mechanism; avoids forking the type package and keeps augmentations co-located with the source.
+- **Workspace-level TS80001 suppression** — Screeps runtime cannot support ESM `import`; per-file `@ts-ignore` would need to be added to every source file. `.vscode/settings.json` suppresses the hint once for the entire workspace.
 - **1 CARRY on the 600-energy miner** — trading one WORK part for CARRY is a net win: 5 WORK × 2 energy/tick still saturates a source at full regeneration rate (10/tick), and the link delivery path becomes reachable. The previous 6-WORK / no-CARRY body silently broke the entire link network by making `transfer()` always fail.
 - **Emergency hauler at 150 energy** — 150 is the exact cost of `[CARRY, CARRY, MOVE]`; the threshold must be low enough to fire before extensions are full. Gated on `minersAlive >= 1` so a hauler is not spawned into a room with no income.
 - **`watch.js` reads `.screeps.json`** — reusing the same config file as `push.js` avoids a second credential location; the token is already gitignored.
@@ -93,15 +101,17 @@ The bot is in active mid-game development. This session fixed the root cause of 
 - The `roles/` subdirectory appears unused — legacy scaffold.
 - No CPU profiling at high RCL with full creep roster.
 - Stamp planner hub scoring formula may not produce the best hub for every room layout.
+- `checkJs` is `false` in `tsconfig.json`; the TypeScript language server provides hover types but does not actively report JS errors. If deeper checking is desired, `checkJs: true` can be enabled — the ambient declarations in `global.d.ts` and the JSDoc casts should handle all current call sites cleanly.
 
 ## Next Steps
 
-1. Observe miners at the 600-energy tier in live game: confirm they are filling source links rather than dropping energy to the ground.
-2. Verify emergency hauler spawns correctly after a hauler wipe: economy should resume within 2–3 ticks of the emergency creep being live.
-3. Monitor link network throughput: with source links filling correctly, confirm the receiver link is transferring to the storage/spawn area and hauler count remains at 1.
-4. Continue watching RCL 5 unlock: 2nd tower built, `desiredUpgraders()` scales as storage fills past 50k/150k/300k thresholds.
-5. Verify infrastructure-aware upgrader body selection in live game (carried over).
-6. Verify invader core detection: defender spawns only when a core is present.
-7. At RCL 6, verify mineral harvester spawns and deposits to terminal.
-8. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
-9. If player raids with healers become a problem, re-add the ranged defender variant.
+1. Observe live game: confirm haulers spawn immediately in link mode after a wipe (no deadlock).
+2. Verify receiver link is recognized by both the emergency bootstrap and idle top-up paths.
+3. Observe miners at the 600-energy tier: confirm energy is transferring to source links (not dropping to ground).
+4. Monitor link network throughput with the full fix chain live; verify hauler count stays at 1.
+5. Continue watching RCL 5 unlock: 2nd tower built, `desiredUpgraders()` scales as storage fills past 50k/150k/300k thresholds.
+6. Verify infrastructure-aware upgrader body selection in live game (carried over).
+7. Verify invader core detection: defender spawns only when a core is present.
+8. At RCL 6, verify mineral harvester spawns and deposits to terminal.
+9. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
+10. If player raids with healers become a problem, re-add the ranged defender variant.

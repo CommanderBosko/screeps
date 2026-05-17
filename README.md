@@ -4,7 +4,7 @@ A Screeps MMO bot written in plain JavaScript. The bot automates a full colony l
 
 ## Current Status
 
-Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5 reliably; RCL 5 unlock expected imminently. Recent work fixed the root cause of miners never filling source links (no CARRY parts), added an emergency hauler bootstrap to break economy deadlocks, and introduced `watch.js` for real-time console streaming. Earlier sessions refined defender spawning (invader-core-gated, melee-only), hardened barrier repair with tiered HP caps, and fixed numerous economy issues across the hauler, miner, and upgrader pipeline.
+Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5 reliably; RCL 5 unlock expected imminently. Recent work fixed the root cause of miners never filling source links, resolved the link-mode hauler spawn deadlock, set up full TypeScript type coverage for the plain JS codebase, and introduced `watch.js` for real-time console streaming. Earlier sessions refined defender spawning (invader-core-gated, melee-only), hardened barrier repair with tiered HP caps, and fixed numerous economy issues across the hauler, miner, and upgrader pipeline. Haulers are confirmed spawning correctly in link mode.
 
 ## Features
 
@@ -130,12 +130,20 @@ src/
   role.attacker.js       — Combat creep for attack campaigns (manual: Memory.attackEnabled = true)
   role.remoteMiner.js    — Travels to Memory.remoteRooms target, mines safe sources, carries energy home to storage
   role.mineralHarvester.js — RCL 6+: harvests room mineral into terminal then storage
+  global.d.ts            — Ambient TypeScript augmentations for project-specific CreepMemory/RoomMemory/Memory fields
   roles/                 — (unused, legacy scaffold)
 push.js                  — Upload script: reads src/*.js and POSTs to Screeps API
 watch.js                 — Real-time console streaming: WebSocket subscription to MMO console with auto-reconnect
+.vscode/settings.json    — Workspace setting: disables JS suggestion actions (suppresses TS80001 on require() calls)
 ```
 
 ## Recent Changes
+
+### 2026-05-17 — TypeScript Setup, Hauler Spawn Deadlock Fix, Link-Mode Bootstrap
+
+- **Link-mode hauler spawn deadlock broken**: `spawnStandard` was waiting for `energyCapacityAvailable` before spawning a hauler — but with no hauler, extensions drain and `energyAvailable` never reaches capacity. Fixed by spawning the hauler from `room.energyAvailable` directly; it spawns at minimum 300 energy immediately, extensions refill once the hauler is live.
+- **Emergency bootstrap and idle top-up are now link-aware**: both paths check receiver links in addition to containers; in link mode energy arrives via receiver links, not containers — the old code was silently skipping spawns.
+- **TypeScript checking fully configured**: `@types/screeps` + `@types/node` injected via `tsconfig.json`; `moduleResolution: "node10"` for CommonJS; `baseUrl: "./src"` for bare `require()` resolution; `lib` includes `"dom"` for `console`; `src/global.d.ts` augments `CreepMemory`, `RoomMemory`, and `Memory` with all project-specific fields; JSDoc casts on `getObjectById` call sites; `.vscode/settings.json` suppresses TS80001 at workspace level.
 
 ### 2026-05-17 — Miner Link Delivery Fix, Emergency Hauler Bootstrap, watch.js, tsconfig Cleanup
 
@@ -161,9 +169,9 @@ watch.js                 — Real-time console streaming: WebSocket subscription
 
 ## Roadmap
 
-- Verify 600-energy miners are transferring energy directly to source links in live game (not dropping to ground)
-- Confirm emergency hauler fires correctly after a hauler wipe; economy should resume within 2–3 ticks
-- Monitor link network throughput with miners now correctly filling source links
+- Verify 600-energy miners are transferring energy directly to source links (not dropping to ground)
+- Confirm emergency hauler fires after a deliberate hauler wipe; verify economy resumes within 2–3 ticks
+- Monitor link network throughput with the full fix chain live; confirm hauler count stays at 1
 - Monitor RCL 5 unlock: 2nd tower built, `desiredUpgraders()` activates as storage fills through 50k/150k/300k thresholds
 - Verify infrastructure-aware upgrader body selection in live game
 - Verify invader core detection: defender spawns on core presence only; no spawn for ordinary NPC waves
