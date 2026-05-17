@@ -1,4 +1,3 @@
-// @ts-nocheck
 const roleHarvester = require('role.harvester');
 const roleUpgrader = require('role.upgrader');
 const roleBuilder = require('role.builder');
@@ -454,7 +453,13 @@ function spawnForRoom(spawn) {
                 (!c.ticksToLive || c.ticksToLive >= MINER_RESPAWN_TTL)
             ).length;
             if (activeHaulers < 1 && room.energyAvailable >= 300) {
-                spawnStandard(spawn, 'hauler', rn);
+                // Use energyAvailable (not energyCapacityAvailable) so we spawn immediately
+                // even when extensions are drained. Without this, spawnStandard targets the
+                // full-capacity cost and bails every tick, deadlocking the room permanently.
+                const body = getBody('hauler', room.energyAvailable);
+                spawn.spawnCreep(body, 'Hauler' + Game.time, {
+                    memory: { role: 'hauler', homeRoom: rn }
+                });
                 return;
             }
         } else {
