@@ -4,6 +4,79 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-05-17 — Miner Link Delivery Fix, Emergency Hauler Bootstrap, watch.js, tsconfig Cleanup
+
+**Duration Estimate**: Single focused session (4 commits)
+**Session Focus**: Fix the root cause of miners never filling source links, unblock economy deadlocks with an emergency hauler, and add a real-time console streaming utility.
+
+### What Was Accomplished
+
+**Root cause fix — miners could not fill source links (`src/main.js`):**
+- Miners at the 600-energy tier had no CARRY parts, so `creep.store.getFreeCapacity()` was always 0 and `creep.transfer()` to the adjacent source link always returned `ERR_NOT_ENOUGH_RESOURCES`. Energy was falling to the ground and containers were absorbing it via drop-mining instead.
+- Fixed by adding 1 CARRY to the 600-energy miner body tier: `[WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]`. This gives the miner 50 energy capacity, allowing it to accumulate energy in store and transfer directly to the adjacent source link.
+- Previous body at 600 energy: `[WORK, WORK, WORK, WORK, WORK, WORK, MOVE]` — 6 WORK, no CARRY.
+- New body: `[WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]` — 5 WORK + 1 CARRY. One WORK part is traded; the link delivery path is now reachable.
+
+**Emergency hauler bootstrap (`src/main.js`):**
+- Added a 150-energy emergency hauler spawn `[CARRY, CARRY, MOVE]` that fires before the normal hauler block.
+- Trigger condition: at least one miner is alive AND the total live hauler count is 0.
+- Without this, the economy could permanently deadlock after a hauler wipe: miners run, containers fill, but no hauler exists to drain them, so miners stop mining (containers full) and income halts.
+- The emergency spawn uses a reduced energy threshold (150 vs the normal 300+) so it can fire even when extensions are not yet filled.
+
+**tsconfig.json corrected for plain JS typecheck:**
+- Changed `include` from `src/**/*.ts` to `src/**/*.js` (the project is plain JS, not TypeScript).
+- Added `allowJs: true`, switched `module`/`moduleResolution` from `ESNext`/`bundler` to `commonjs`/`node`.
+- Disabled strict checking and added `ignoreDeprecations: "6.0"` to suppress false positives from runtime-injected Screeps globals.
+- Excluded `watch.js` and `push.js` from tsconfig — they are standalone utility scripts, not Screeps source modules; including them caused spurious CommonJS diagnostics.
+- Added `// @ts-nocheck` to `src/main.js` to suppress remaining language-server hints from runtime globals.
+
+**`watch.js` — real-time Screeps console streaming:**
+- New utility script that connects to the Screeps MMO WebSocket API.
+- Fetches `userId` from `/api/auth/me` using the auth token from `.screeps.json`.
+- Subscribes to `user/<userId>/console` and streams log lines to the terminal in real time.
+- Strips HTML color tags from game output, prepends tick numbers, and reconnects with exponential backoff on disconnect.
+- Reads auth token from `.screeps.json` (same config file used by `push.js`) so no additional setup is required.
+
+**Node.js now a system package:**
+- `node` is available system-wide; `nix-shell -p nodejs` wrapper is no longer required.
+- `node push.js` and `node watch.js` work directly from any shell.
+
+### Files Changed
+
+- `src/main.js` — Emergency hauler bootstrap (150-energy `[CARRY,CARRY,MOVE]` spawn before normal hauler block); 600-energy miner body changed from `[WORK×6, MOVE]` to `[WORK×5, CARRY, MOVE]`; `// @ts-nocheck` added at top
+- `tsconfig.json` — `include` changed to `src/**/*.js`; `allowJs: true` added; `module`/`moduleResolution` set to `commonjs`/`node`; strict disabled; `ignoreDeprecations: "6.0"` added; `watch.js` and `push.js` added to `exclude`
+- `watch.js` — New file: real-time Screeps MMO console streaming via WebSocket with exponential backoff reconnection
+
+### Commits This Session
+
+- `0157d49` — fix: emergency hauler bootstrap + tsconfig for plain JS typecheck
+- `887d4ff` — chore: exclude utility scripts from tsconfig
+- `bd8e0b9` — fix(miner): add 1 CARRY to 600-energy tier so miners can fill source links
+- `672502e` — feat: add watch.js for streaming Screeps console output
+
+### Decisions Made
+
+- **1 CARRY on the 600-energy miner** — trading one WORK for CARRY is a net win: the link delivery path becomes reachable and instant energy transfer to the receiver link is far more efficient than the drop-mine → container → hauler path. The 5-WORK miner still saturates a source (5 WORK × 2 energy/tick = 10 energy/tick = source regeneration rate).
+- **Emergency hauler at 150 energy** — the threshold must be low enough to fire when extensions are not yet filled; 150 is the exact cost of `[CARRY, CARRY, MOVE]`. The spawn is gated on `minersAlive >= 1` to avoid spawning a hauler with nothing to haul.
+- **`watch.js` reads `.screeps.json`** — reusing the same config file as `push.js` avoids introducing a second credential location; the auth token is already gitignored.
+- **Exclude utility scripts from tsconfig** — `push.js` and `watch.js` are Node.js CommonJS scripts, not Screeps modules. Including them in the tsconfig caused the language server to diagnose `require()` calls as ESM import errors, which were false positives that could not be suppressed per-file cleanly.
+
+### Issues Encountered
+
+- The link delivery code path in `role.miner.js` was entirely unreachable in the deployed bot because miners above 600 energy had no CARRY. The bug was silent — `transfer()` returned an error code that was not checked, and the energy simply fell to the floor where the container absorbed it. The symptom was containers filling despite links being empty.
+- The tsconfig `include` was targeting `.ts` files, meaning the language server was not analyzing the actual `src/*.js` files at all. Type annotations and hover info were absent for the entire codebase.
+
+### Remaining / Next Session
+
+- Deploy and observe: confirm 600-energy miners are now transferring energy directly to source links (not just dropping to ground)
+- Verify emergency hauler fires correctly after a hauler wipe — no more permanent deadlock
+- Monitor link network throughput: with miners now filling source links, confirm the receiver link is transferring to storage/spawn area and hauler count stays at 1
+- Continue watching RCL 5 unlock (if not yet happened): 2nd tower built, `desiredUpgraders()` activates as storage fills
+- Verify infrastructure-aware upgrader body selection in live game (carried over from 2026-05-06)
+- Consider deleting `defense.js` — only chokepoint wall placement remains; planner owns all other structure placement
+
+---
+
 ## Session: 2026-05-06 — Infrastructure-Aware Upgrader, barrierCap Consolidation, Remote Miner Carry, CPU Audit
 
 **Duration Estimate**: Single focused session (1 commit)

@@ -1,16 +1,18 @@
 # Project State
 
-_Last updated: 2026-05-06_
+_Last updated: 2026-05-17_
 
 ## Current Project State
 
-The bot is in active mid-game development. Core economic and defensive systems are well-hardened. This session addressed seven systemic issues: upgrader body selection is now infrastructure-aware (balanced WORK/CARRY when no link or container exists near the controller); `barrierCap()` is consolidated into `cache.js` as the single source of truth; the repairer spawn gate bug (dangling import after prior consolidation) is fixed; remote miners now carry energy home instead of dropping it; `cache.getTowers()` extracts a repeated inline filter; storage floors are lowered to keep builders and repairers functional at lower reserves; and several raw `room.find()` calls in `planner.js` and `main.js` are routed through `cache.find()`.
+The bot is in active mid-game development. This session fixed the root cause of miners never filling source links (no CARRY parts on the 600-energy tier), added an emergency hauler bootstrap to break economy deadlocks, corrected the tsconfig to properly cover the plain JS codebase, and added `watch.js` for real-time console streaming. All changes have been deployed to the MMO server.
 
 **What works:**
 - Full RCL 1–8 spawn logic with role prioritization and emergency fallback
 - Emergency guard correctly requires zero harvesters AND zero miners/haulers before firing
-- Emergency spawn now creates a miner (not harvester) when a source container exists, preventing ghost haulers
+- **Emergency hauler bootstrap**: 150-energy `[CARRY,CARRY,MOVE]` spawns before the normal hauler block whenever miners are alive but no haulers exist — breaks permanent economy deadlock after hauler wipe
+- Emergency spawn creates a miner (not harvester) when a source container exists, preventing ghost haulers
 - Miner + hauler economy activates at RCL 4; one miner per container; `containerId` stamped at spawn; pre-spawn replacement triggered before dying miner expires
+- **600-energy miner body fixed**: `[WORK×5, CARRY, MOVE]` — 1 CARRY gives 50 energy capacity; miners can now accumulate energy and `transfer()` directly to adjacent source links. Previously the body was `[WORK×6, MOVE]` with no CARRY, making the link delivery path unreachable
 - Miners excluded from `rebalanceSources`; miner source assignment filtered to `homeRoom` (no cross-room conflicts)
 - Hauler count collapses to 1 when `srcLinks >= 1 && receiverLinks >= 1`
 - Hauler total-count ceiling: cannot exceed number of source containers regardless of per-container pinning state
@@ -25,7 +27,7 @@ The bot is in active mid-game development. Core economic and defensive systems a
 - Scout: counts by homeRoom; 1500-tick cooldown; reusePath=5; single `room.find()` for structures
 - Stamp planner: fixed 11×11 template with full footprint validation; `countType()`, `needsReplanning()`, `totalSites()`, and `placeRoads()` all use `cache.find()`
 - **Repairer barrier caps**: `cache.barrierCap(rcl)` — RCL 1–3 → 10k; RCL 4–5 → 50k; RCL 6 → 200k; RCL 7 → 1M; RCL 8 → 5M; single source of truth shared by role.repairer.js and the spawn gate in main.js
-- **Repairer spawn gate**: demand-driven; only spawns when emergency rampart (<500 HP) exists, or barriers below `barrierCap(rcl)`, or non-barrier damage with no energized tower; gate was broken by a dangling import (now fixed to call `cache.barrierCap()` directly)
+- **Repairer spawn gate**: demand-driven; only spawns when emergency rampart (<500 HP) exists, or barriers below `barrierCap(rcl)`, or non-barrier damage with no energized tower
 - **Repairer target-lock**: `_resolveTarget` clears the lock only on structure destruction (not HP cap); full energy load committed to one barrier per trip
 - **Repairer tower-fill removed**: harvesters and builders own tower fill; repairer ignores tower energy level
 - **Tower simplified**: handles only emergency ramparts (< 500 HP) and non-barrier structure repair
@@ -39,13 +41,17 @@ The bot is in active mid-game development. Core economic and defensive systems a
 - Repairer storage withdraw floor lowered to 300 (was 1000)
 - `cache.getTowers(room)` helper used by `runTowers()` and `checkSafeMode()`
 - `checkAttackComplete()` uses `cache.find()` for hostile and structure queries
+- **`watch.js`**: real-time Screeps MMO console streaming via WebSocket; reads auth token from `.screeps.json`; exponential backoff reconnection; HTML tag stripping; tick number prefixes
+- **tsconfig.json**: correctly targets `src/**/*.js` with `allowJs: true`, `commonjs`/`node` module resolution; utility scripts excluded
 
 **In progress / known fragile:**
-- Remote miner behavior with returning pattern not yet observed in live game
+- Miner link delivery fix just deployed — not yet verified in live game that miners are filling source links
+- Emergency hauler bootstrap just deployed — not yet observed firing in a real deadlock scenario
+- Remote miner behavior with returning pattern not yet fully verified in live game
 - Mineral harvester untested in live game (requires RCL 6)
 - Multi-room expansion untested at scale
 - `defense.js` stripped to only chokepoint wall placement; candidate for deletion
-- Stamp planner untested against live rooms
+- Stamp planner not yet verified against live room hub placement
 
 **Not yet implemented:**
 - Hauler withdraw from storage (haulers still drain containers/links only)
@@ -56,11 +62,11 @@ The bot is in active mid-game development. Core economic and defensive systems a
 ## Current Goals
 
 ### Short-term (next 1–3 sessions)
-- Deploy and observe infrastructure-aware upgrader: confirm balanced WORK/CARRY body at current RCL if no link/container near controller
-- Watch repairer spawn gate now correctly wired to `cache.barrierCap(rcl)` — confirm repairers spawn when barriers are below RCL cap
-- Observe remote miner returning home and depositing to storage; verify heavier CARRY body produces meaningful loads per trip
-- Monitor RCL 5 unlock (if not yet happened): storage placed, 2nd tower built, link network activates, hauler count collapses to 1
-- Watch `desiredUpgraders()` activate and scale as storage fills
+- Verify 600-energy miners are transferring energy directly to source links in live game (not just dropping to ground)
+- Confirm emergency hauler fires correctly when hauler count reaches zero with miners running
+- Monitor link network throughput now that miners can fill source links
+- Monitor RCL 5 unlock: 2nd tower built, `desiredUpgraders()` activates as storage fills
+- Observe infrastructure-aware upgrader body selection in live game
 
 ### Long-term
 - Reach RCL 8 in starting room
@@ -71,19 +77,15 @@ The bot is in active mid-game development. Core economic and defensive systems a
 
 ## Recent Decisions
 
-- **Infrastructure-aware upgrader spawning** — a WORK-heavy body wastes 70–80% of tick time walking empty when the upgrader has no adjacent energy source; body selection now checks for a receiver link or container within range 3 of the controller before picking the heavy tier.
-- **barrierCap into cache.js** — the function was duplicated across `role.repairer.js` (definition + export) and `main.js` (import + usage); a single canonical location in `cache.js` eliminates synchronization risk and removes inter-module export coupling.
-- **Repairer spawn gate fixed** — the `needsRepair` gate in `main.js` had a dangling import (`barrierCap` from `role.repairer.js`) after the function moved to `cache.js`; gate now calls `cache.barrierCap(rcl)` directly.
-- **Remote miner must carry energy home** — dropping energy in a remote room with no hauler is waste; carrying and depositing to storage is net positive even with more CARRY parts; heavier CARRY body makes each trip worthwhile.
-- **Storage floors lowered** — the original floors (2000/1000) were overly conservative and prevented builders and repairers from using storage until well-stocked; lowering to 500/300 keeps non-income roles functional at low storage.
+- **1 CARRY on the 600-energy miner** — trading one WORK part for CARRY is a net win: 5 WORK × 2 energy/tick still saturates a source at full regeneration rate (10/tick), and the link delivery path becomes reachable. The previous 6-WORK / no-CARRY body silently broke the entire link network by making `transfer()` always fail.
+- **Emergency hauler at 150 energy** — 150 is the exact cost of `[CARRY, CARRY, MOVE]`; the threshold must be low enough to fire before extensions are full. Gated on `minersAlive >= 1` so a hauler is not spawned into a room with no income.
+- **`watch.js` reads `.screeps.json`** — reusing the same config file as `push.js` avoids a second credential location; the token is already gitignored.
+- **Utility scripts excluded from tsconfig** — `push.js` and `watch.js` are Node.js CommonJS scripts, not Screeps modules; including them caused false-positive ESM diagnostics that could not be cleanly suppressed.
+- **Infrastructure-aware upgrader spawning** — a WORK-heavy body wastes 70–80% of tick time walking empty when the upgrader has no adjacent energy source; body selection checks for a receiver link or container within range 3 of the controller before picking the heavy tier.
+- **barrierCap into cache.js** — single canonical location eliminates synchronization risk between role.repairer.js and main.js.
 - **Repairer target lock cleared only on destruction** — clearing the lock at HP cap caused mid-trip re-sorting; the correct moment to pick a new target is when the store is empty.
-- **Repairer must not fill towers** — harvesters and builders own tower fill; the old transfer block emptied the repairer's store before reaching any barrier.
 - **Invader core-gated defender spawn** — towers kill NPC invaders before a defender finishes spawning; invader cores require a melee attacker since towers cannot target structures.
-- **Melee-only defender** — ranged variant removed; can be re-added if player raids with healers become common.
 - **Storage-scaled upgrader count** — `desiredUpgraders()` provides four tiers to avoid starving the economy at low storage while hammering the controller when energy is plentiful.
-- **Hauler total-count ceiling** — per-container assignment alone failed to account for legacy unassigned haulers; ceiling prevents unbounded accumulation.
-- **Emergency path spawns miner when container exists** — spawning a harvester with no container makes it invisible to per-container hauler count; miner keeps the economy on the correct path.
-- **Full-capacity spawn wait** — one large creep is more efficient than two small ones on MMO; income-critical roles bypass the wait.
 
 ## Known Issues / Tech Debt
 
@@ -94,13 +96,12 @@ The bot is in active mid-game development. Core economic and defensive systems a
 
 ## Next Steps
 
-1. Deploy and observe infrastructure-aware upgrader: at current RCL, confirm balanced WORK/CARRY body when no link/container is near the controller. After RCL 5 with a controller container in place, confirm switch to WORK-heavy body.
-2. Watch repairer spawn gate — repairers should spawn when barriers are below the RCL cap (previously this was silently broken).
-3. Observe remote miner returning home and depositing to storage; verify the heavier CARRY body produces meaningful energy per trip.
-4. Continue monitoring RCL 5 unlock: storage placed, 2nd tower built, link network activates, hauler count collapses to 1.
-5. Watch `desiredUpgraders()` activate once storage is built; upgrader count should shift at 50k/150k/300k thresholds.
-6. Verify invader core detection in live game: defender spawns only when a core is present.
+1. Observe miners at the 600-energy tier in live game: confirm they are filling source links rather than dropping energy to the ground.
+2. Verify emergency hauler spawns correctly after a hauler wipe: economy should resume within 2–3 ticks of the emergency creep being live.
+3. Monitor link network throughput: with source links filling correctly, confirm the receiver link is transferring to the storage/spawn area and hauler count remains at 1.
+4. Continue watching RCL 5 unlock: 2nd tower built, `desiredUpgraders()` scales as storage fills past 50k/150k/300k thresholds.
+5. Verify infrastructure-aware upgrader body selection in live game (carried over).
+6. Verify invader core detection: defender spawns only when a core is present.
 7. At RCL 6, verify mineral harvester spawns and deposits to terminal.
-8. Verify stamp planner hub tile selection on current room.
-9. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
-10. If player raids with healers become a problem, re-add the ranged defender variant.
+8. Consider deleting or consolidating `defense.js` since planner now owns all structure placement.
+9. If player raids with healers become a problem, re-add the ranged defender variant.

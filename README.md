@@ -4,13 +4,15 @@ A Screeps MMO bot written in plain JavaScript. The bot automates a full colony l
 
 ## Current Status
 
-Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5 reliably; RCL 5 unlock expected imminently. Recent work refined defender spawning (now invader-core-gated, melee-only), hardened barrier repair with tiered HP caps, and fixed numerous economy issues across the hauler, miner, and upgrader pipeline.
+Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5 reliably; RCL 5 unlock expected imminently. Recent work fixed the root cause of miners never filling source links (no CARRY parts), added an emergency hauler bootstrap to break economy deadlocks, and introduced `watch.js` for real-time console streaming. Earlier sessions refined defender spawning (invader-core-gated, melee-only), hardened barrier repair with tiered HP caps, and fixed numerous economy issues across the hauler, miner, and upgrader pipeline.
 
 ## Features
 
 **Economy**
 - RCL 1–3: generalist harvesters mine and deliver energy directly
 - RCL 4+: dedicated miners (one per container; `containerId` stamped at spawn; pre-spawned before dying miner expires) + haulers (carry energy to structures)
+- 600-energy miner body: `[WORK×5, CARRY, MOVE]` — 1 CARRY lets miners accumulate energy and transfer directly to adjacent source links
+- Emergency hauler bootstrap: 150-energy `[CARRY,CARRY,MOVE]` spawns before the normal hauler block whenever miners are alive but no haulers exist — prevents permanent deadlock after hauler wipe
 - Link network (RCL 5+): source links transfer energy instantly to receiver link near spawn/storage; hauler count collapses to 1 when `srcLinks >= 1 && receiverLinks >= 1`
 - Hauler picks fullest container (max energy reduce) rather than closest; idles by topping up store and parking at spawn
 - Energy body scaling: all roles wait for full-capacity body before spawning (income-critical roles bypass wait)
@@ -64,7 +66,7 @@ Active development — mid-game systems stable and well-hardened. Bot progresses
 ### Prerequisites
 
 - Screeps account (screeps.com)
-- Node.js (NixOS: `nix-shell -p nodejs`)
+- Node.js (available as a system package on this machine; no `nix-shell` wrapper needed)
 
 ### Installation
 
@@ -91,12 +93,20 @@ Create `.screeps.json` at the project root (gitignored):
 ### Deploying
 
 ```bash
-nix-shell -p nodejs --run "node push.js"
+node push.js
 # or
 npm run push
 ```
 
 `push.js` reads all `.js` files from `src/`, names each module after the filename (without extension), and uploads them to the Screeps API under the `default` branch.
+
+### Streaming Console Output
+
+```bash
+node watch.js
+```
+
+`watch.js` connects to the Screeps MMO WebSocket API, reads the auth token from `.screeps.json`, and streams real-time console output to the terminal. Reconnects automatically with exponential backoff.
 
 ## Project Structure
 
@@ -122,43 +132,40 @@ src/
   role.mineralHarvester.js — RCL 6+: harvests room mineral into terminal then storage
   roles/                 — (unused, legacy scaffold)
 push.js                  — Upload script: reads src/*.js and POSTs to Screeps API
+watch.js                 — Real-time console streaming: WebSocket subscription to MMO console with auto-reconnect
 ```
 
 ## Recent Changes
+
+### 2026-05-17 — Miner Link Delivery Fix, Emergency Hauler Bootstrap, watch.js, tsconfig Cleanup
+
+- **Root cause fix**: 600-energy miner body changed from `[WORK×6, MOVE]` to `[WORK×5, CARRY, MOVE]`; without CARRY, `creep.transfer()` always failed (store capacity was 0), so source links were never filled — energy fell to the ground and containers absorbed it. 1 CARRY = 50 energy capacity makes the link delivery path reachable. 5 WORK still saturates a source at full regeneration rate.
+- **Emergency hauler bootstrap**: 150-energy `[CARRY,CARRY,MOVE]` spawns before the normal hauler block when miners are alive and no haulers exist — breaks permanent economy deadlock after hauler wipe.
+- **`watch.js`** added: real-time Screeps MMO console streaming via WebSocket; reads auth token from `.screeps.json`; strips HTML tags; shows tick numbers; exponential backoff reconnection.
+- **tsconfig.json** corrected: `include` changed to `src/**/*.js`; `allowJs: true`; `commonjs`/`node` module resolution; strict disabled; utility scripts (`push.js`, `watch.js`) excluded.
+- Node.js is now a system package — `nix-shell -p nodejs` wrapper no longer required.
 
 ### 2026-05-06 — Infrastructure-Aware Upgrader, barrierCap Consolidation, Remote Miner Carry, CPU Audit
 
 - `getUpgraderBody(energy, hasAdjacentEnergy)` added: selects balanced WORK/CARRY body when no link or container is within range 3 of the controller; WORK-heavy body only when infrastructure is confirmed; all tiers RCL-8-safe
 - `spawnUpgrader()` detects receiver links and controller-adjacent containers before selecting the body tier; upgrader split out of the generic role spawn loop
 - `cache.barrierCap(rcl)` replaces the local function in `role.repairer.js` (now deleted) and the dangling import in `main.js`; single source of truth for both the repairer and the spawn gate
-- Repairer spawn gate fixed: was silently broken by a dangling `barrierCap` import after prior consolidation; gate now calls `cache.barrierCap(rcl)` directly — repairers will now spawn correctly when barriers are below the RCL cap
-- `role.remoteMiner.js` overhauled: two-flag returning pattern (`returning = false/true`) replaces drop-on-full; miner carries energy home and deposits to storage; body rebalanced with much heavier CARRY
-- `cache.getTowers(room)` helper extracted; `runTowers()` and `checkSafeMode()` updated to use it
+- `role.remoteMiner.js` overhauled: two-flag returning pattern replaces drop-on-full; miner carries energy home and deposits to storage; body rebalanced with heavier CARRY
 - Storage withdraw floors lowered: `role.builder.js` 2000→500; `role.repairer.js` 1000→300
-- `checkAttackComplete()` in `main.js`: raw `room.find()` replaced with `cache.find()`
-- `planner.js`: `totalSites()` and `placeRoads()` raw `room.find()` calls replaced with `cache.find()`
 
 ### 2026-05-03 — Repairer Full-Load Lock, Tower-Fill Removal, Target-Switch Fix
 
-- `_resolveTarget` rewritten: target lock cleared only when structure is destroyed (`Game.getObjectById` returns null), not at HP cap — eliminates mid-trip target switching
-- Tower-fill block (`transfer()` to towers below 50%) removed from `doRepair`; harvesters and builders own tower fill
+- `_resolveTarget` rewritten: target lock cleared only when structure is destroyed, not at HP cap — eliminates mid-trip target switching
+- Tower-fill block removed from `doRepair`; harvesters and builders own tower fill
 - Store-empty flip normalized to `getUsedCapacity() === 0`; full energy load committed before refueling
-- `_lockTarget` helper extracted; inline target-ID management replaced
-
-### 2026-05-01 — Invader Core-Gated Defender, Melee-Only Body, RCL 5 Readiness
-
-- Defender spawn triggers only when `STRUCTURE_INVADER_CORE` is present; removed reactive spawn on normal NPC invader waves
-- Ranged defender branch removed; defender is melee-only (`TOUGH+ATTACK+MOVE` variants)
-- `role.defender.js` targets the invader core first, falls back to nearest hostile creep
-- RCL 5 readiness confirmed: no code changes needed for the upcoming unlock
 
 ## Roadmap
 
-- Observe infrastructure-aware upgrader in live game: confirm balanced body at current RCL; confirm switch to WORK-heavy body once a controller link or container is placed
-- Watch repairer spawn gate now that `barrierCap` is correctly wired — repairers should spawn when barriers are below the RCL cap
-- Observe remote miner returning home and depositing to storage; verify heavier CARRY body loads are worthwhile
-- Monitor RCL 5 unlock: storage placed, 2nd tower built, link network activates, hauler count collapses to 1
-- Watch `desiredUpgraders()` scale at 50k/150k/300k storage thresholds post-RCL-5
+- Verify 600-energy miners are transferring energy directly to source links in live game (not dropping to ground)
+- Confirm emergency hauler fires correctly after a hauler wipe; economy should resume within 2–3 ticks
+- Monitor link network throughput with miners now correctly filling source links
+- Monitor RCL 5 unlock: 2nd tower built, `desiredUpgraders()` activates as storage fills through 50k/150k/300k thresholds
+- Verify infrastructure-aware upgrader body selection in live game
 - Verify invader core detection: defender spawns on core presence only; no spawn for ordinary NPC waves
 - Test mineral harvester at RCL 6
 - Add hauler withdraw from storage when storage exists
