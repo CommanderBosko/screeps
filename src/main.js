@@ -412,6 +412,30 @@ function spawnForRoom(spawn) {
         return;
     }
 
+    // Emergency hauler bootstrap: miners running + containers have energy + zero haulers + spawn starved.
+    // A [CARRY,CARRY,MOVE] (150 energy) is enough to ferry one load and break the deadlock.
+    // This must fire BEFORE the normal hauler block, which waits for a full-capacity body.
+    if (rcl >= 4 && room.energyAvailable >= 150 && room.energyAvailable < 300) {
+        const activeHaulersNow = _.filter(Game.creeps, c =>
+            c.memory.role === 'hauler' && c.memory.homeRoom === rn &&
+            (!c.ticksToLive || c.ticksToLive >= MINER_RESPAWN_TTL)
+        ).length;
+        if (activeHaulersNow === 0) {
+            const hasMiners = roomCreeps('miner', rn) > 0;
+            const containerHasEnergy = roomSources.some(src =>
+                src.pos.findInRange(FIND_STRUCTURES, 1, {
+                    filter: s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0
+                }).length > 0
+            );
+            if (hasMiners && containerHasEnergy) {
+                spawn.spawnCreep([CARRY, CARRY, MOVE], 'EmergHauler' + Game.time, {
+                    memory: { role: 'hauler', homeRoom: rn }
+                });
+                return;
+            }
+        }
+    }
+
     // Haulers — one per source container; collapse to 1 (unassigned) once links are operational
     if (rcl >= 4) {
         const { srcLinks, receiverLinks } = cache.getLinkRoles(room);

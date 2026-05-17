@@ -1,14 +1,17 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "commonjs",
+    "moduleResolution": "node",
     "lib": ["ES2017"],
-    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "strict": false,
     "sourceMap": true,
     "rootDir": "./src",
     "outDir": "./dist",
-    "typeRoots": ["./node_modules/@types"]
+    "typeRoots": ["./node_modules/@types"],
+    "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.js"]
 }
