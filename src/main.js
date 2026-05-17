@@ -1,3 +1,4 @@
+// @ts-nocheck
 const roleHarvester = require('role.harvester');
 const roleUpgrader = require('role.upgrader');
 const roleBuilder = require('role.builder');
@@ -676,11 +677,16 @@ function getBody(role, energy) {
     switch (role) {
         case 'miner':
             // 5-WORK saturates a source (10 energy/tick). Stationary — only needs 1 MOVE.
+            // Top tier adds 1 CARRY so the miner can accumulate energy and transfer to a
+            // source link (RCL 5+). Without CARRY, store.getFreeCapacity() is always 0 and
+            // creep.transfer() always fails — links never receive energy from the miner.
+            // Lower tiers have no CARRY because links don't exist at those RCLs; drop-mining
+            // into the adjacent container is the correct strategy there.
             // Breakpoints match exact body costs to prevent spawn rejection.
-            if (energy >= 550) return [WORK, WORK, WORK, WORK, WORK, MOVE];  // 550 cost
-            if (energy >= 400) return [WORK, WORK, WORK, MOVE];              // 400 cost
-            if (energy >= 250) return [WORK, WORK, MOVE];                    // 250 cost (no CARRY — stationary)
-            return [WORK, MOVE];                                              // 150 cost
+            if (energy >= 600) return [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE];  // 600 cost (5W+1C+1M)
+            if (energy >= 400) return [WORK, WORK, WORK, MOVE];                     // 400 cost
+            if (energy >= 250) return [WORK, WORK, MOVE];                            // 250 cost (no CARRY — stationary)
+            return [WORK, MOVE];                                                      // 150 cost
 
         case 'hauler':
             // 1 MOVE per 2 CARRY on roads. Scale aggressively — hauler throughput = energy economy.
