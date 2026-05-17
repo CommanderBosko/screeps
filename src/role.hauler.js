@@ -89,7 +89,7 @@ const roleHauler = {
 
         // Pinned to a specific container (pre-link mode)
         if (creep.memory.containerId) {
-            const container = Game.getObjectById(creep.memory.containerId);
+            const container = /** @type {StructureContainer|null} */ (Game.getObjectById(creep.memory.containerId));
             if (container && container.store[RESOURCE_ENERGY] > 0) {
                 if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
                     creep.moveTo(container, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });

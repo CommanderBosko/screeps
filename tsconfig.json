@@ -2,17 +2,19 @@
   "compilerOptions": {
     "target": "ES2017",
     "module": "commonjs",
-    "moduleResolution": "node",
-    "lib": ["ES2017"],
+    "moduleResolution": "node10",
+    "lib": ["ES2017", "dom"],
     "allowJs": true,
     "checkJs": false,
     "strict": false,
     "sourceMap": true,
+    "baseUrl": "./src",
     "rootDir": "./src",
     "outDir": "./dist",
     "typeRoots": ["./node_modules/@types"],
+    "types": ["screeps"],
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.js"],
+  "include": ["src/**/*.js", "src/**/*.d.ts"],
   "exclude": ["watch.js", "push.js"]
 }
