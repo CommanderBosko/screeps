@@ -12,7 +12,7 @@
     "rootDir": "./src",
     "outDir": "./dist",
     "typeRoots": ["./node_modules/@types"],
-    "types": ["screeps"],
+    "types": ["screeps", "node"],
     "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.js", "src/**/*.d.ts"],

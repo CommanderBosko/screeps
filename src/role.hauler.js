@@ -48,9 +48,21 @@ const roleHauler = {
             } else {
                 // Nothing to fill right now — top up store if possible, then park near spawn.
 
-                // Step 1: if we have room, grab from the fullest container so we're
-                // ready to deliver the instant a spawn/extension becomes available.
+                // Step 1: if we have room, pre-fill from receiver links (link mode) or
+                // containers (pre-link mode) so we're ready to deliver the instant a
+                // spawn/extension becomes available.
                 if (creep.store.getFreeCapacity() > 0) {
+                    // Prefer receiver links — in link mode containers will be empty
+                    const { receiverLinks } = cache.getLinkRoles(creep.room);
+                    const readyLinks = receiverLinks.filter(l => l.store[RESOURCE_ENERGY] > 0);
+                    if (readyLinks.length > 0) {
+                        const src = creep.pos.findClosestByRange(readyLinks);
+                        if (creep.withdraw(src, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(src, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 10 });
+                        }
+                        creep.say('🔋');
+                        return;
+                    }
                     const containers = cache.find(creep.room, FIND_STRUCTURES)
                         .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
                     if (containers.length > 0) {
