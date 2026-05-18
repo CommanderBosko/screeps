@@ -311,8 +311,16 @@ function applyStamp(room, hub, rcl) {
             // Skip if the correct structure/site already exists here.
             if (structs.some(s => s.structureType === type)) continue;
             if (sites.some(s => s.structureType === type)) continue;
-            // Don't overwrite a different existing structure or site.
-            if (structs.length > 0 || sites.length > 0) continue;
+            // Roads are lower priority than stamped structures — demolish any
+            // road that is blocking this tile so the structure can claim it.
+            // Non-road structures and construction sites are never overwritten.
+            const nonRoadStructs = structs.filter(s => s.structureType !== STRUCTURE_ROAD);
+            if (nonRoadStructs.length > 0 || sites.length > 0) continue;
+            const blockingRoads = structs.filter(s => s.structureType === STRUCTURE_ROAD);
+            if (blockingRoads.length > 0) {
+                for (const road of blockingRoads) road.destroy();
+                continue; // site will be placed on the next planner run
+            }
         }
 
         const result = room.createConstructionSite(x, y, type);
