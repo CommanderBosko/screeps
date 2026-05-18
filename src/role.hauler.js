@@ -183,12 +183,17 @@ const roleHauler = {
         );
         if (extensions.length > 0) return creep.pos.findClosestByPath(extensions);
 
-        // Priority 3: towers (keep full for defense and safe mode)
+        // Priority 3: towers — pick the emptiest first (most free capacity) for even fill,
+        // break ties by range so we don't ignore a completely empty far tower
         const towers = myStructs.filter(s =>
             s.structureType === STRUCTURE_TOWER &&
             s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
         );
-        if (towers.length > 0) return creep.pos.findClosestByRange(towers);
+        if (towers.length > 0) {
+            const maxFree = Math.max(...towers.map(t => t.store.getFreeCapacity(RESOURCE_ENERGY)));
+            const neediest = towers.filter(t => t.store.getFreeCapacity(RESOURCE_ENERGY) === maxFree);
+            return creep.pos.findClosestByRange(neediest);
+        }
 
         // Priority 4: storage (bank excess energy)
         const storage = creep.room.storage;
