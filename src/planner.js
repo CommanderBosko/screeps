@@ -15,8 +15,8 @@ const POWERSPAWN_LIMITS = [0, 0, 0,  0,  0,  0,  0,  0,  1];
 // Fixed 11×11 (±5) template centered on the hub tile.
 // Offsets are [dx, dy] from hub center.
 //
-// Processing order: spawn → storage → extensions → towers → link (receiver) →
-//                   terminal → labs → observer → nuker → power spawn → roads
+// Processing order: spawn → storage → link (receiver) → terminal → labs →
+//                   towers → observer → nuker → power spawn → extensions → roads
 //
 // Roads come LAST so structures claim their tiles first; road placement then
 // skips occupied tiles (createConstructionSite returns ERR_INVALID_TARGET).
@@ -46,6 +46,38 @@ const STAMP = (function () {
 
     // ── Storage ────────────────────────────────────────────────────────────
     add(0, -1, STRUCTURE_STORAGE);
+
+    // ── Receiver link ──────────────────────────────────────────────────────
+    // [0,-2]: just above storage, short transfer path to spawn/extensions.
+    add(0, -2, STRUCTURE_LINK);
+
+    // ── Terminal ────────────────────────────────────────────────────────────
+    add(0, 1, STRUCTURE_TERMINAL);
+
+    // ── Labs (10) ──────────────────────────────────────────────────────────
+    // Clustered in the +x / -y quadrant, clear of towers at [-3,-3],[3,-3].
+    // [2,-3] is the first lab; it was deliberately kept out of extensions.
+    for (const [dx, dy] of [
+        [2,-3],[2,-4],[2,-5],
+        [3,-4],[3,-5],
+        [4,-4],[4,-5],
+        [5,-4],[5,-5],
+        [4,-3],
+    ]) add(dx, dy, STRUCTURE_LAB);
+
+    // ── Towers (6) ─────────────────────────────────────────────────────────
+    for (const [dx, dy] of [
+        [-3,-3],[3,-3],[-3,3],[3,3],[-4,-2],[4,-2],
+    ]) add(dx, dy, STRUCTURE_TOWER);
+
+    // ── Observer ───────────────────────────────────────────────────────────
+    add(0, 2, STRUCTURE_OBSERVER);
+
+    // ── Nuker ──────────────────────────────────────────────────────────────
+    add(-4, 4, STRUCTURE_NUKER);
+
+    // ── Power Spawn ────────────────────────────────────────────────────────
+    add(4, 4, STRUCTURE_POWER_SPAWN);
 
     // ── Extensions (60 total) ──────────────────────────────────────────────
     // [0,-2] reserved for link, [0,2] reserved for observer, [2,-3] is a lab.
@@ -83,38 +115,6 @@ const STAMP = (function () {
         [-5,-1],[5,-1],[-5,1],[5,1],
         [-4,-3],[-3,-4],[-4,3],
     ]) add(dx, dy, STRUCTURE_EXTENSION);
-
-    // ── Towers (6) ─────────────────────────────────────────────────────────
-    for (const [dx, dy] of [
-        [-3,-3],[3,-3],[-3,3],[3,3],[-4,-2],[4,-2],
-    ]) add(dx, dy, STRUCTURE_TOWER);
-
-    // ── Receiver link ──────────────────────────────────────────────────────
-    // [0,-2]: just above storage, short transfer path to spawn/extensions.
-    add(0, -2, STRUCTURE_LINK);
-
-    // ── Terminal ────────────────────────────────────────────────────────────
-    add(0, 1, STRUCTURE_TERMINAL);
-
-    // ── Labs (10) ──────────────────────────────────────────────────────────
-    // Clustered in the +x / -y quadrant, clear of towers at [-3,-3],[3,-3].
-    // [2,-3] is the first lab; it was deliberately kept out of extensions.
-    for (const [dx, dy] of [
-        [2,-3],[2,-4],[2,-5],
-        [3,-4],[3,-5],
-        [4,-4],[4,-5],
-        [5,-4],[5,-5],
-        [4,-3],
-    ]) add(dx, dy, STRUCTURE_LAB);
-
-    // ── Observer ───────────────────────────────────────────────────────────
-    add(0, 2, STRUCTURE_OBSERVER);
-
-    // ── Nuker ──────────────────────────────────────────────────────────────
-    add(-4, 4, STRUCTURE_NUKER);
-
-    // ── Power Spawn ────────────────────────────────────────────────────────
-    add(4, 4, STRUCTURE_POWER_SPAWN);
 
     // ── Internal roads (LAST — placed after structures claim their tiles) ──
     // Cardinal cross ±5 from center. Occupied tiles are skipped silently.
@@ -684,8 +684,8 @@ const planner = {
 
         const hub = mem.plan.hub;
 
-        // Stamp: spawn, storage, extensions, towers, link, terminal, labs, observer,
-        //        nuker, power spawn, then roads — all gated by RCL.
+        // Stamp: spawn, storage, link, terminal, labs, towers, observer,
+        //        nuker, power spawn, extensions, then roads — all gated by RCL.
         applyStamp(room, hub, rcl);
 
         // Source/controller containers (proximity-based, not in stamp)
