@@ -128,24 +128,27 @@ const roleHauler = {
                 creep.say('📦');
                 return;
             }
-            // Container empty or gone — wait near it rather than roaming
-            if (container && !creep.pos.inRangeTo(container, 2)) {
-                creep.moveTo(container, { visualizePathStyle: { stroke: '#aaaaaa' }, reusePath: 10 });
-            }
-            creep.say('⏳');
-            return;
+            // Container empty or gone — clear pin and fall through to other sources
+            delete creep.memory.containerId;
         }
 
-        // Unassigned fallback (should only apply in link mode or edge cases)
-        const containers = cache.find(creep.room, FIND_STRUCTURES)
-            .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
-        if (containers.length > 0) {
-            const target = pickContainer(creep, containers);
-            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+        // Unassigned fallback — prefer source-adjacent containers (link overflow) over others
+        {
+            const sources = cache.find(creep.room, FIND_SOURCES);
+            const allContainers = cache.find(creep.room, FIND_STRUCTURES)
+                .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
+            const sourceContainers = allContainers.filter(c =>
+                sources.some(s => c.pos.inRangeTo(s, 2))
+            );
+            const containerPool = sourceContainers.length > 0 ? sourceContainers : allContainers;
+            if (containerPool.length > 0) {
+                const target = pickContainer(creep, containerPool);
+                if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                }
+                creep.say('📦');
+                return;
             }
-            creep.say('📦');
-            return;
         }
 
         // Storage fallback: in link mode the receiver link may be controller-adjacent
