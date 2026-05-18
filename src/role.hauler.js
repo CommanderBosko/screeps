@@ -54,7 +54,11 @@ const roleHauler = {
                 if (creep.store.getFreeCapacity() > 0) {
                     // Prefer receiver links — in link mode containers will be empty
                     const { receiverLinks } = cache.getLinkRoles(creep.room);
-                    const readyLinks = receiverLinks.filter(l => l.store[RESOURCE_ENERGY] > 0);
+                    const ctrl = creep.room.controller;
+                    const readyLinks = receiverLinks.filter(l =>
+                        l.store[RESOURCE_ENERGY] > 0 &&
+                        !(ctrl && l.pos.inRangeTo(ctrl, 3))
+                    );
                     if (readyLinks.length > 0) {
                         const src = creep.pos.findClosestByRange(readyLinks);
                         if (creep.withdraw(src, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -73,6 +77,16 @@ const roleHauler = {
                         creep.say('🔋');
                         return;
                     }
+                    // Storage fallback: receiver link filtered out, containers empty — pre-fill
+                    // from storage so we're ready the instant a spawn/extension opens up.
+                    const storage = creep.room.storage;
+                    if (storage && storage.store[RESOURCE_ENERGY] > 0) {
+                        if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                        }
+                        creep.say('🏦');
+                        return;
+                    }
                 }
 
                 // Step 2: full (or nothing to pull from) — park at range 1 of spawn.
@@ -87,9 +101,14 @@ const roleHauler = {
 
         if (cache.pickupNearby(creep, 5)) return;
 
-        // Receiver links sit near spawn/storage — withdraw here first (shortest trip)
+        // Receiver links sit near spawn/storage — withdraw here first (shortest trip).
+        // Exclude controller-adjacent links (within 3 tiles) — those are reserved for upgraders.
         const { receiverLinks } = cache.getLinkRoles(creep.room);
-        const readyReceivers = receiverLinks.filter(l => l.store[RESOURCE_ENERGY] > 0);
+        const ctrl = creep.room.controller;
+        const readyReceivers = receiverLinks.filter(l =>
+            l.store[RESOURCE_ENERGY] > 0 &&
+            !(ctrl && l.pos.inRangeTo(ctrl, 3))
+        );
         if (readyReceivers.length > 0) {
             const target = creep.pos.findClosestByRange(readyReceivers);
             if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -127,6 +146,20 @@ const roleHauler = {
             }
             creep.say('📦');
             return;
+        }
+
+        // Storage fallback: in link mode the receiver link may be controller-adjacent
+        // (filtered above), leaving no links or containers to pull from. Withdraw from
+        // storage so extensions/spawns don't starve.
+        {
+            const storage = creep.room.storage;
+            if (storage && storage.store[RESOURCE_ENERGY] > 0) {
+                if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                }
+                creep.say('🏦');
+                return;
+            }
         }
 
         creep.say('💤');
