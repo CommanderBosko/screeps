@@ -4,7 +4,7 @@ A Screeps MMO bot written in plain JavaScript. The bot automates a full colony l
 
 ## Current Status
 
-Active development — mid-game systems stable and well-hardened. Bot progresses through RCL 1–5 reliably; RCL 5 unlock expected imminently. Recent work fixed the root cause of miners never filling source links, resolved the link-mode hauler spawn deadlock, set up full TypeScript type coverage for the plain JS codebase, and introduced `watch.js` for real-time console streaming. Earlier sessions refined defender spawning (invader-core-gated, melee-only), hardened barrier repair with tiered HP caps, and fixed numerous economy issues across the hauler, miner, and upgrader pipeline. Haulers are confirmed spawning correctly in link mode.
+Active development — mid-game systems stable, approaching RCL 6. Recent work fixed hauler energy-source selection in a 3-link room, corrected tower-fill priority (emptiest tower first), and laid the complete RCL 6 foundation: `lab.js` reaction manager, extractor placement on the mineral tile, stamp order rewritten so terminal/labs are placed before extensions, and road demolition so blocked terminal/lab tiles clear on the next planner run. Earlier sessions resolved the link-mode hauler spawn deadlock, fixed miners never filling source links (missing CARRY part), set up full TypeScript type coverage, and introduced `watch.js` for real-time console streaming.
 
 ## Features
 
@@ -14,7 +14,9 @@ Active development — mid-game systems stable and well-hardened. Bot progresses
 - 600-energy miner body: `[WORK×5, CARRY, MOVE]` — 1 CARRY lets miners accumulate energy and transfer directly to adjacent source links
 - Emergency hauler bootstrap: 150-energy `[CARRY,CARRY,MOVE]` spawns before the normal hauler block whenever miners are alive but no haulers exist — prevents permanent deadlock after hauler wipe
 - Link network (RCL 5+): source links transfer energy instantly to receiver link near spawn/storage; hauler count collapses to 1 when `srcLinks >= 1 && receiverLinks >= 1`
-- Hauler picks fullest container (max energy reduce) rather than closest; idles by topping up store and parking at spawn
+- Hauler pickup order: non-controller receiver links → source containers (link overflow) → storage; `containerId` cleared on empty container to prevent pre-link deadlock
+- Hauler tower fill: emptiest tower first (most free capacity), tiebroken by range — prevents full tower absorbing all deliveries while an empty tower is ignored
+- Hauler storage fallback: in a 3-link room (2 source + 1 controller), the hauler correctly skips the controller-adjacent link and draws from storage; extensions stay filled
 - Energy body scaling: all roles wait for full-capacity body before spawning (income-critical roles bypass wait)
 - Builders only spawn when construction sites exist
 - Upgrader count scales with storage energy via `desiredUpgraders()`: no storage → 2; <50k → 1; <150k → 2; <300k → 3; 300k+ → 4
@@ -22,13 +24,16 @@ Active development — mid-game systems stable and well-hardened. Bot progresses
 - Opportunistic creep renewal: idle spawns renew nearby haulers (RCL 4+) or any role (RCL 1–3) with TTL < 400
 - Remote miner role: travels to rooms listed in `Memory.remoteRooms`, mines safe sources (SK-room aware), carries energy home and deposits to storage (two-flag returning pattern; body rebalanced with heavier CARRY)
 - Mineral harvester role: RCL 6+, one per room with extractor, deposits to terminal then storage
+- Lab reaction manager (`lab.js`, RCL 6+): designates input/output labs by geometry, runs configured reaction per tick; set `Memory.labReaction['RoomName'] = 'OH'` to start
 
 **Structure Planning**
-- Automated planner runs every 5 ticks with a fast `needsReplanning()` early-exit
+- Automated planner runs every 5 ticks with a fast `needsReplanning()` early-exit; `needsReplanning()` checks for missing terminal, labs, and extractor so missed structures always trigger a replan
 - Full rewrite: fixed 11×11 stamp template centered on hub tile encodes all structure types (spawn, storage, 60 extensions, 6 towers, receiver link, terminal, 10 labs, observer, nuker, power spawn, roads); hub candidate validated with `stampFits()` before committing
-- RCL-gated placement via `STAMP_LIMITS` map; roads placed last so structures claim tiles first
+- RCL-gated placement via `STAMP_LIMITS` map; stamp order: unique structures (terminal, labs, towers, link) placed before extensions so the 90-site cap never blocks high-value structures
 - RCL-gated rampart placement: spawn-only at RCL 2–3; spawn + towers at RCL 4; full coverage at RCL 5+
 - Self-healing: replan triggers if structures are destroyed (raid recovery)
+- Road demolition: `applyStamp` destroys any road occupying a structure tile (e.g., terminal/lab tiles that were roaded at lower RCL), allowing construction sites to appear on the next tick
+- Extractor placed on the mineral tile at RCL 6+
 - 90-site cap respected; roads coexist with ramparts but not other structures
 
 **Defense**
@@ -130,6 +135,7 @@ src/
   role.attacker.js       — Combat creep for attack campaigns (manual: Memory.attackEnabled = true)
   role.remoteMiner.js    — Travels to Memory.remoteRooms target, mines safe sources, carries energy home to storage
   role.mineralHarvester.js — RCL 6+: harvests room mineral into terminal then storage
+  lab.js                 — RCL 6+: reaction manager; designates input/output/output labs by geometry; Memory.labReaction controls product
   global.d.ts            — Ambient TypeScript augmentations for project-specific CreepMemory/RoomMemory/Memory fields
   roles/                 — (unused, legacy scaffold)
 push.js                  — Upload script: reads src/*.js and POSTs to Screeps API
@@ -138,6 +144,16 @@ watch.js                 — Real-time console streaming: WebSocket subscription
 ```
 
 ## Recent Changes
+
+### 2026-05-17 — Hauler Energy Source, Tower Fill, RCL 6 Foundation (lab/extractor/terminal)
+
+- **Hauler storage fallback (3-link rooms)**: with 2 source links and 1 controller link, the hauler correctly skips the controller-adjacent link but previously had no remaining source, starving extensions. Now draws from storage as fallback.
+- **Hauler pickup reordered**: non-controller receiver links → source containers → storage; `containerId` cleared when pinned container is empty to break the pre-link container deadlock.
+- **Emptiest tower first**: hauler now sorts towers by free capacity before delivering — a fully empty distant tower is always served before a nearly-full nearby one.
+- **`lab.js` added**: RCL 6 reaction manager wired into the game loop; input/output/output lab designation by geometry; configure with `Memory.labReaction['RoomName'] = 'OH'`.
+- **Extractor placed on mineral tile at RCL 6+** via planner; `needsReplanning()` checks terminal/labs/extractor.
+- **Stamp order fixed**: terminal, labs, towers, and link are now placed before extensions; the 90-site cap no longer blocks these structures.
+- **Road demolition in `applyStamp`**: roads occupying terminal/lab tiles are destroyed during stamp application, allowing construction sites to appear on the next planner tick.
 
 ### 2026-05-17 — TypeScript Setup, Hauler Spawn Deadlock Fix, Link-Mode Bootstrap
 
@@ -169,14 +185,15 @@ watch.js                 — Real-time console streaming: WebSocket subscription
 
 ## Roadmap
 
-- Verify 600-energy miners are transferring energy directly to source links (not dropping to ground)
-- Confirm emergency hauler fires after a deliberate hauler wipe; verify economy resumes within 2–3 ticks
-- Monitor link network throughput with the full fix chain live; confirm hauler count stays at 1
+- Observe live game: confirm hauler draws from storage in 3-link setup and extensions stay filled
+- Watch planner run at RCL 6: confirm roads on terminal/lab tiles are demolished and construction sites appear
+- Verify lab reaction manager picks correct input/output labs and reactions run (`Memory.labReaction['RoomName'] = 'OH'`)
+- Verify extractor appears on mineral tile at RCL 6
+- Confirm 600-energy miners are transferring energy directly to source links (not dropping to ground)
+- Confirm emergency hauler bootstrap fires after a deliberate hauler wipe; economy resumes within 2–3 ticks
+- Monitor link network throughput; confirm hauler count stays at 1
 - Monitor RCL 5 unlock: 2nd tower built, `desiredUpgraders()` activates as storage fills through 50k/150k/300k thresholds
-- Verify infrastructure-aware upgrader body selection in live game
 - Verify invader core detection: defender spawns on core presence only; no spawn for ordinary NPC waves
-- Test mineral harvester at RCL 6
-- Add hauler withdraw from storage when storage exists
 - Delete or consolidate `defense.js` (mostly dead code after planner consolidation)
 - Re-add ranged defender if player raids with healers become a problem
 - Reach RCL 8 in starting room, claim second room

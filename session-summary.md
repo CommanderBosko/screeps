@@ -4,6 +4,89 @@ _Most recent session at top._
 
 ---
 
+## Session: 2026-05-17 — Hauler Energy Source, Tower Fill, RCL 6 Foundation (lab/extractor/terminal)
+
+**Duration Estimate**: Single focused session (6 commits)
+**Session Focus**: Fix hauler energy-source selection in a 3-link room, correct tower-fill priority, and lay the complete RCL 6 infrastructure foundation (lab reaction manager, extractor, terminal, stamp order, road demolition).
+
+### What Was Accomplished
+
+**Hauler storage fallback for 3-link setup (`src/role.hauler.js`):**
+- With a 3-link room (2 source links + 1 controller receiver link), the hauler correctly filtered out the controller-adjacent link but had no remaining pickup source, leaving extensions and spawns empty.
+- Fixed: when no non-controller receiver link is available, the hauler now draws from storage as the primary energy source.
+- Also refactored `getTransferTarget` in `role.harvester.js` to a module-level function so the hauler can reuse it.
+
+**Hauler source container priority + `containerId` deadlock fix (`src/role.hauler.js`):**
+- Reordered pickup chain: non-controller receiver links → source containers (link overflow) → storage. Previously storage was checked before containers, bypassing energy that had accumulated in source-adjacent containers during the link-mode transition.
+- Haulers pinned to a pre-link container (`containerId` in memory) would wait forever at an empty container in link mode instead of falling through to the next source. Fixed by clearing `containerId` and falling through when the pinned container is empty.
+
+**Emptiest tower first (`src/role.hauler.js`):**
+- `findClosestByRange` was routing the hauler to the nearest tower regardless of how full it was, allowing a nearly-full nearby tower to absorb all deliveries while a completely empty distant tower went unserviced.
+- Fixed: towers are now sorted by free capacity (most free first), with range as a tiebreaker. A tower with 0 energy is always preferred over one at 90% full.
+
+**`lab.js` — RCL 6 reaction manager (new file):**
+- New module wired into the game loop via `main.js`.
+- Designates labs by geometry: furthest from center = input A, second-furthest = input B, center or closest = output.
+- Runs the configured reaction each tick and handles `ERR_NOT_ENOUGH_RESOURCES` gracefully.
+- Configurable at runtime: `Memory.labReaction['RoomName'] = 'OH'` (or any compound product).
+
+**Extractor + terminal + labs in planner (`src/planner.js`):**
+- `planner.js` now places an extractor on the mineral tile at RCL 6+.
+- `needsReplanning()` checks for missing terminal, labs, and extractor — missed structures always trigger a replan.
+- `lastRCL` commit guard extended to gate on all three new structure types.
+
+**Stamp order fix — unique structures before extensions (`src/planner.js`):**
+- Terminal, labs, towers, and link were placed after extensions in the stamp loop. The 90-site cap was exhausted mid-extension-ring, and terminal/labs were never queued.
+- Fixed: unique structures (terminal, labs, towers, link) are processed first; the 60-extension ring processes last and defers gracefully when the cap is hit.
+
+**Road demolition in `applyStamp` (`src/planner.js`):**
+- Roads placed at RCL 2–5 permanently blocked terminal/lab construction sites: the tile was occupied, so no construction site could appear.
+- Fixed: `applyStamp` now calls `structure.destroy()` on any road occupying a structure tile (excluding roads intentionally on road tiles). The next planner tick places the construction site.
+
+### Files Changed
+
+- `src/role.harvester.js` — `getTransferTarget` refactored to module-level export for reuse by hauler
+- `src/role.hauler.js` — storage fallback for 3-link rooms; source container pickup before storage; `containerId` deadlock cleared; emptiest tower first (sort by free capacity, tiebreak by range)
+- `src/lab.js` — New file: RCL 6 reaction manager; input/output lab designation by geometry; `Memory.labReaction` control
+- `src/main.js` — `lab.run()` wired into game loop per owned room
+- `src/planner.js` — extractor placement on mineral tile; `needsReplanning()` checks terminal/labs/extractor; stamp order rewritten (unique structures before extensions); `applyStamp` demolishes blocking roads; `lastRCL` guard extended
+
+### Commits This Session
+
+- `89e67d0` — fix(hauler): fall back to storage when only receiver link is controller-adjacent
+- `f9c8e0a` — fix(hauler): prefer source containers over storage, fix containerId deadlock
+- `1a6bb8c` — fix(hauler): fill emptiest tower first instead of nearest
+- `7fc9fa9` — feat: add extractor, lab reactions, and terminal foundation (RCL 6)
+- `56377b2` — fix(planner): place terminal and labs before extensions in stamp order
+- `3ff5437` — fix(planner): demolish blocking roads so terminal and labs can be placed
+
+### Decisions Made
+
+- **Hauler storage fallback** — in a 3-link room the only receiver link is controller-adjacent; filtering it out correctly (hauler shouldn't pick up from a link feeding the controller) left no energy source. Storage is the correct fallback since it holds the room's reserve.
+- **Source containers before storage** — source containers hold link overflow energy; emptying them first keeps the link network flowing cleanly and reduces storage churn.
+- **`containerId` cleared on empty container** — pinning is correct while the container has energy; once the container is empty in link mode, the pin is stale. Clearing it lets the hauler re-evaluate the full pickup chain.
+- **Emptiest tower first** — the failure mode of "nearest tower" is silent: defense degrades when one empty tower fails to fire, but no error is logged. Sorting by free capacity eliminates the failure mode at negligible CPU cost.
+- **Stamp order: unique structures first** — extensions are 60 copies; terminal/labs are 1 each. The natural loop order was alphabetical or arbitrary; the intentional order is rarity-first so cap-limited runs always get the irreplaceable structures.
+- **Road demolition over road avoidance** — the alternative was to teach `stampFits()` to reject road-occupied tiles. That would force hub re-selection for rooms where a road happened to land on a terminal tile — unacceptable churn. Demolishing the road is cheap and correct.
+- **Lab geometry heuristic** — sorting labs by distance from the stamp center produces a stable A/B/output assignment without requiring manual configuration. Validated for the current 10-lab stamp layout; may need revisiting if the stamp changes.
+
+### Issues Encountered
+
+- After transitioning to link mode, the hauler was silently idle: no receiver link passed the non-controller filter, no container had energy, and storage fallback was missing. Extensions drained to 0 over several minutes before the bug was identified.
+- The stamp order bug was a silent capacity failure: the planner ran successfully and placed 90 sites, but all were extensions; terminal and labs were never added to the queue. The issue was discovered by inspecting `totalSites()` output and noticing terminal was absent.
+- Roads placed at RCL 2 as part of the hub road network occupied the exact tiles that the terminal and lab stamps required at RCL 6. Since roads are legitimate structures, `applyStamp` skipped those tiles, resulting in no construction sites being queued even after the stamp order was fixed.
+
+### Remaining / Next Session
+
+- Observe live game: confirm hauler draws from storage in 3-link setup and extensions stay filled
+- Watch planner tick after reaching RCL 6: confirm roads on terminal/lab tiles are demolished and construction sites appear the next run
+- Verify lab reaction manager picks correct input/output labs and reactions run — set `Memory.labReaction['RoomName'] = 'OH'` to test
+- Verify extractor placed on mineral tile at RCL 6
+- Confirm miners are transferring energy to source links (not dropping to ground) — carried over
+- Monitor link network throughput; confirm hauler count stays at 1
+
+---
+
 ## Session: 2026-05-17 — TypeScript Setup, Hauler Spawn Deadlock Fix, Link-Mode Bootstrap
 
 **Duration Estimate**: Single focused session (3 commits)
