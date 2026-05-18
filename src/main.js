@@ -15,6 +15,7 @@ const towerLogic = require('role.tower');
 const defense = require('defense');
 const cache = require('cache');
 const planner = require('planner');
+const lab = require('lab');
 
 function wipeMemory() {
     for (const name in Memory.creeps) {
@@ -959,6 +960,7 @@ module.exports.loop = function () {
     spawnCreeps();
     renewCreeps();
     for (const roomName in Game.rooms) runLinks(Game.rooms[roomName]);
+    for (const roomName in Game.rooms) lab.run(Game.rooms[roomName]);
     setRoles();
     runTowers();
 

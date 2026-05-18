@@ -325,6 +325,29 @@ function applyStamp(room, hub, rcl) {
     }
 }
 
+// ─── Extractor ────────────────────────────────────────────────────────────
+// Place one extractor on the mineral tile at RCL 6+.
+// The mineral tile is fixed at map-generation time so the stamp can't handle it.
+function placeExtractor(room) {
+    const minerals = room.find(FIND_MINERALS);
+    if (minerals.length === 0) return;
+    const mineral = minerals[0];
+
+    // Skip if already built or a construction site exists at that tile.
+    const existing = mineral.pos.lookFor(LOOK_STRUCTURES)
+        .filter(s => s.structureType === STRUCTURE_EXTRACTOR);
+    if (existing.length > 0) return;
+
+    const existingSite = mineral.pos.lookFor(LOOK_CONSTRUCTION_SITES)
+        .filter(s => s.structureType === STRUCTURE_EXTRACTOR);
+    if (existingSite.length > 0) return;
+
+    const result = room.createConstructionSite(mineral.pos, STRUCTURE_EXTRACTOR);
+    if (result === OK) {
+        console.log('Extractor site placed at ' + mineral.pos + ' in ' + room.name);
+    }
+}
+
 // ─── Source containers ─────────────────────────────────────────────────────
 // One container adjacent to each source for stationary miners to park on.
 function placeContainers(room) {
@@ -596,6 +619,18 @@ function needsReplanning(room, rcl, mem) {
     const linkTarget = LINK_LIMITS[rcl] || 0;
     if (linkTarget > 0 && countType(room, STRUCTURE_LINK) < linkTarget) return true;
 
+    // Terminal
+    const terminalTarget = TERMINAL_LIMITS[rcl] || 0;
+    if (terminalTarget > 0 && countType(room, STRUCTURE_TERMINAL) < terminalTarget) return true;
+
+    // Labs
+    const labTarget = LAB_LIMITS[rcl] || 0;
+    if (labTarget > 0 && countType(room, STRUCTURE_LAB) < labTarget) return true;
+
+    // Extractor — placed separately (mineral tile not known at stamp design time)
+    if (rcl >= 6 && cache.find(room, FIND_MINERALS).length > 0 &&
+        countType(room, STRUCTURE_EXTRACTOR) < 1) return true;
+
     // Ramparts: compare against RCL-scaled target set
     if (rcl >= 2) {
         const myStructsCached = cache.find(room, FIND_MY_STRUCTURES);
@@ -657,6 +692,9 @@ const planner = {
         placeContainers(room);
         if (rcl >= 3) placeControllerContainer(room);
 
+        // Extractor on mineral tile (stamp can't handle this — mineral position is dynamic)
+        if (rcl >= 6) placeExtractor(room);
+
         // Source links + upgrader link (receiver link is in the stamp at [0,-2])
         if (rcl >= 5) placeLinks(room);
 
@@ -672,13 +710,21 @@ const planner = {
         const towerNow = countType(room, STRUCTURE_TOWER);
         const extTarget = EXTENSION_LIMITS[rcl] || 0;
         const towerTarget = TOWER_LIMITS[rcl] || 0;
-        if (extNow >= extTarget && towerNow >= towerTarget) {
+        const termTarget = TERMINAL_LIMITS[rcl] || 0;
+        const labsTarget = LAB_LIMITS[rcl] || 0;
+        const termOk = termTarget === 0 || countType(room, STRUCTURE_TERMINAL) >= termTarget;
+        const labsOk = labsTarget === 0 || countType(room, STRUCTURE_LAB) >= labsTarget;
+        const extractorOk = rcl < 6 || cache.find(room, FIND_MINERALS).length === 0 ||
+            countType(room, STRUCTURE_EXTRACTOR) >= 1;
+        if (extNow >= extTarget && towerNow >= towerTarget && termOk && labsOk && extractorOk) {
             mem.plan.lastRCL = rcl;
         }
 
         console.log('Planner ran for ' + room.name + ' RCL ' + rcl +
             ' ext=' + extNow + '/' + extTarget +
-            ' towers=' + towerNow + '/' + towerTarget);
+            ' towers=' + towerNow + '/' + towerTarget +
+            ' terminal=' + countType(room, STRUCTURE_TERMINAL) + '/' + termTarget +
+            ' labs=' + countType(room, STRUCTURE_LAB) + '/' + labsTarget);
     }
 };
 
