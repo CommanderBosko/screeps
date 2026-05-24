@@ -38,9 +38,16 @@ const towerLogic = {
             return;
         }
 
-        // Repair roads, containers, and other non-barrier structures (repairer handles walls/ramparts)
+        // Repair roads, containers, and other non-barrier structures only when meaningfully
+        // damaged (below 70% health). Repairing at any hits < hitsMax wastes energy every tick
+        // on structures that have decayed only a few HP — this was draining ~20-30 energy/tick
+        // with 2 towers and preventing upgrader/builder spawning.
+        // Roads:      max 5000 — repair at < 3500 (70%)
+        // Containers: max 250000 — repair at < 175000 (70%)
+        // Other:      use 70% of hitsMax as general threshold
+        const TOWER_REPAIR_THRESHOLD = 0.7;
         const damaged = allStructures.filter(s =>
-            s.hits < s.hitsMax &&
+            s.hits < s.hitsMax * TOWER_REPAIR_THRESHOLD &&
             s.structureType !== STRUCTURE_WALL &&
             s.structureType !== STRUCTURE_RAMPART
         );

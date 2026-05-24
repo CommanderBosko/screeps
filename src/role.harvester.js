@@ -39,9 +39,11 @@ const roleHarvester = {
     run: function (creep) {
         if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.delivering = false;
+            console.log('[harvester] ' + creep.name + ' start harvest');
         }
         if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
             creep.memory.delivering = true;
+            console.log('[harvester] ' + creep.name + ' start deliver');
         }
 
         if (creep.memory.delivering) {

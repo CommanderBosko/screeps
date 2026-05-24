@@ -728,11 +728,15 @@ const planner = {
             mem.plan.lastRCL = rcl;
         }
 
-        console.log('Planner ran for ' + room.name + ' RCL ' + rcl +
-            ' ext=' + extNow + '/' + extTarget +
-            ' towers=' + towerNow + '/' + towerTarget +
-            ' terminal=' + countType(room, STRUCTURE_TERMINAL) + '/' + termTarget +
-            ' labs=' + countType(room, STRUCTURE_LAB) + '/' + labsTarget);
+        // Only log every 50 ticks to avoid console spam when needsReplanning keeps
+        // returning true for slowly-healing conditions (decayed containers, ramparts).
+        if (Game.time % 50 === 0) {
+            console.log('Planner ran for ' + room.name + ' RCL ' + rcl +
+                ' ext=' + extNow + '/' + extTarget +
+                ' towers=' + towerNow + '/' + towerTarget +
+                ' terminal=' + countType(room, STRUCTURE_TERMINAL) + '/' + termTarget +
+                ' labs=' + countType(room, STRUCTURE_LAB) + '/' + labsTarget);
+        }
     }
 };
 

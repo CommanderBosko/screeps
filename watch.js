@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Streams Screeps MMO console output to the terminal in real time.
+// Streams Screeps MMO console output to the terminal in real time,
+// and appends each line to screeps-console.log with a timestamp prefix.
 // Run with: nix-shell -p nodejs --run "node watch.js"
 
 'use strict';
@@ -23,6 +24,23 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf8')).main;
 const TOKEN = config.token;
 const HOST  = config.hostname || 'screeps.com';
 const WS_URL = `wss://${HOST}/socket/websocket`;
+
+// ---------------------------------------------------------------------------
+// File logging
+// ---------------------------------------------------------------------------
+
+const LOG_PATH = path.join(__dirname, 'screeps-console.log');
+const logStream = fs.createWriteStream(LOG_PATH, { flags: 'a' });
+
+/**
+ * Write to the log file. Strips ANSI codes so the file stays clean.
+ * @param {string} line  — already-formatted string (may contain ANSI)
+ */
+function writeToFile(line) {
+    // Strip ANSI escape sequences before writing to file
+    const clean = line.replace(/\x1b\[[0-9;]*m/g, '');
+    logStream.write(clean + '\n');
+}
 
 // ---------------------------------------------------------------------------
 // Reconnect state
@@ -61,7 +79,11 @@ function printLog(line, tick) {
     const tickStr = tick != null
         ? `${ANSI.dim}[t${tick}]${ANSI.reset} `
         : '';
-    console.log(`${tickStr}${stripTags(line)}`);
+    const plain = stripTags(line);
+    const ts = timestamp();
+    const out = `[${ts}] ${tickStr}${plain}`;
+    console.log(out);
+    writeToFile(`[${ts}] ${tick != null ? `[t${tick}] ` : ''}${plain}`);
 }
 
 function printResult(line, tick) {
@@ -69,15 +91,25 @@ function printResult(line, tick) {
         ? `${ANSI.dim}[t${tick}]${ANSI.reset} `
         : '';
     // Results (REPL output) get a different colour to distinguish them
-    console.log(`${tickStr}${ANSI.cyan}=> ${stripTags(line)}${ANSI.reset}`);
+    const plain = stripTags(line);
+    const ts = timestamp();
+    const out = `[${ts}] ${tickStr}${ANSI.cyan}=> ${plain}${ANSI.reset}`;
+    console.log(out);
+    writeToFile(`[${ts}] ${tick != null ? `[t${tick}] ` : ''}=> ${plain}`);
 }
 
 function printMeta(msg) {
-    console.log(`${ANSI.dim}${ANSI.green}[watch] ${msg}${ANSI.reset}`);
+    const ts = timestamp();
+    const out = `[${ts}] ${ANSI.dim}${ANSI.green}[watch] ${msg}${ANSI.reset}`;
+    console.log(out);
+    writeToFile(`[${ts}] [watch] ${msg}`);
 }
 
 function printError(msg) {
-    console.error(`${ANSI.red}[watch] ${msg}${ANSI.reset}`);
+    const ts = timestamp();
+    const out = `[${ts}] ${ANSI.red}[watch] ${msg}${ANSI.reset}`;
+    console.error(out);
+    writeToFile(`[${ts}] [watch] ERROR: ${msg}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +134,7 @@ function handleMessage(raw) {
     // Auth result
     if (str.startsWith('auth ok')) {
         printMeta('authenticated — subscribing to console');
-        ws.send(`subscribe user/${userId}/console`);
+        ws.send(`subscribe user:${userId}/console`);
         reconnectDelay = RECONNECT_DELAY_MS; // reset backoff on successful auth
         return;
     }
@@ -126,7 +158,7 @@ function handleMessage(raw) {
 
     const [event, payload] = frame;
 
-    if (event === 'console') {
+    if (event === `user:${userId}/console` || event === 'console') {
         const messages = (payload && payload.messages) || {};
         const tick     = payload && payload.tick;
 
@@ -239,6 +271,7 @@ function scheduleReconnect() {
 
 printMeta(`Screeps console watcher started at ${timestamp()}`);
 printMeta(`server: ${HOST}  |  token: ${TOKEN.slice(0, 8)}...`);
+printMeta(`logging to: ${LOG_PATH}`);
 
 fetchUserId()
     .then((id) => {
@@ -255,5 +288,11 @@ fetchUserId()
 process.on('SIGINT', () => {
     printMeta('shutting down');
     if (ws) ws.close();
-    process.exit(0);
+    logStream.end(() => process.exit(0));
+});
+
+process.on('SIGTERM', () => {
+    printMeta('shutting down (SIGTERM)');
+    if (ws) ws.close();
+    logStream.end(() => process.exit(0));
 });

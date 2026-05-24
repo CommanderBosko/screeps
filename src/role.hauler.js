@@ -33,9 +33,11 @@ const roleHauler = {
     run: function (creep) {
         if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.delivering = false;
+            console.log('[hauler] ' + creep.name + ' pickup (store empty)');
         }
         if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
             creep.memory.delivering = true;
+            console.log('[hauler] ' + creep.name + ' deposit (store full ' + creep.store[RESOURCE_ENERGY] + ')');
         }
 
         if (creep.memory.delivering) {

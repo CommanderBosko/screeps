@@ -306,13 +306,27 @@ function spawnForRoom(spawn) {
     const room = spawn.room;
     const rn = room.name;
 
+    // Diagnostic: always log energy and population so we can see deadlocks in the console.
+    if (Game.time % 10 === 0) {
+        const rcl0 = room.controller ? room.controller.level : 0;
+        console.log('[spawn-diag] ' + rn +
+            ' RCL=' + rcl0 +
+            ' energy=' + room.energyAvailable + '/' + room.energyCapacityAvailable +
+            ' miners=' + roomCreeps('miner', rn) +
+            ' harvesters=' + roomCreeps('harvester', rn) +
+            ' haulers=' + roomCreeps('hauler', rn) +
+            ' upgraders=' + roomCreeps('upgrader', rn) +
+            ' builders=' + roomCreeps('builder', rn));
+    }
+
     // Defenders — only when an invader core is present in the room
     const invaderCores = cache.find(room, FIND_STRUCTURES).filter(s => s.structureType === STRUCTURE_INVADER_CORE);
     if (invaderCores.length > 0 && roomCreeps('defender', rn) < 2) {
         const defBody = getBody('defender', room.energyCapacityAvailable);
         const defCost = bodyCost(defBody);
         if (room.energyAvailable >= defCost) {
-            spawn.spawnCreep(defBody, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
+            const defResult = spawn.spawnCreep(defBody, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
+            if (defResult === OK) console.log('[spawn] ' + rn + ' defender ' + JSON.stringify(defBody));
             return;
         }
         // Can't afford ideal body yet — spawn minimum viable defender immediately if no coverage
@@ -320,7 +334,8 @@ function spawnForRoom(spawn) {
             const emergBody = room.energyAvailable >= 280
                 ? [TOUGH, TOUGH, ATTACK, ATTACK, MOVE, MOVE]
                 : [TOUGH, ATTACK, MOVE, MOVE];
-            spawn.spawnCreep(emergBody, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
+            const emergDefResult = spawn.spawnCreep(emergBody, 'Defender' + Game.time, { memory: { role: 'defender', homeRoom: rn } });
+            if (emergDefResult === OK) console.log('[spawn] ' + rn + ' defender(emerg) ' + JSON.stringify(emergBody));
             return;
         }
     }
@@ -331,37 +346,58 @@ function spawnForRoom(spawn) {
 
     // Emergency: if all income creeps are gone and spawn is starving, skip normal thresholds
     if (rcl <= 3 && roomCreeps('harvester', rn) === 0 && room.energyAvailable >= 200) {
-        spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
+        const r = spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
             memory: { role: 'harvester', homeRoom: rn }
         });
+        if (r === OK) console.log('[spawn] ' + rn + ' harvester(emerg) [WORK,CARRY,MOVE]');
         return;
     }
-    if (rcl >= 4 && roomCreeps('miner', rn) === 0 && roomCreeps('hauler', rn) === 0 && roomCreeps('harvester', rn) === 0 && room.energyAvailable >= 200) {
-        // Find the first source container so the emergency miner can park correctly
-        const emergSources = cache.find(room, FIND_SOURCES);
-        let emergContainerId = null;
-        let emergSourceId = null;
-        for (const src of emergSources) {
-            const sc = src.pos.findInRange(FIND_STRUCTURES, 1, {
-                filter: s => s.structureType === STRUCTURE_CONTAINER
-            })[0];
-            if (sc) { emergContainerId = sc.id; emergSourceId = src.id; break; }
+    // Determine whether any source containers exist in this room.
+    // Used by the emergency bootstrap and the miner-loop fallback below.
+    let anySourceContainer = false;
+    let emergContainerId = null;
+    let emergSourceId = null;
+    for (const src of roomSources) {
+        const sc = src.pos.findInRange(FIND_STRUCTURES, 1, {
+            filter: s => s.structureType === STRUCTURE_CONTAINER
+        })[0];
+        if (sc) {
+            anySourceContainer = true;
+            if (!emergSourceId) { emergContainerId = sc.id; emergSourceId = src.id; }
         }
-        if (emergSourceId) {
-            // Container exists — spawn as miner so it will be renewed on the normal miner path
-            spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
-                memory: { role: 'miner', sourceId: emergSourceId, containerId: emergContainerId, homeRoom: rn }
-            });
-        } else {
-            // No container yet — spawn a minimal harvester to bootstrap income.
-            // A hauler with no container to pull from is useless and, worse, would be
-            // counted as a "live hauler" with no containerId, making it invisible to
-            // the per-container assigned check and permanently inflating hauler count by 1.
-            spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
-                memory: { role: 'harvester', homeRoom: rn }
-            });
+    }
+
+    if (rcl >= 4 && roomCreeps('miner', rn) === 0 && roomCreeps('harvester', rn) === 0 && room.energyAvailable >= 200) {
+        // Fire when ALL income creeps are gone, OR when a hauler exists but has nothing to
+        // pull from — the hauler alone generates zero income.
+        // IMPORTANT: also check that source containers actually have energy. A hauler with
+        // live containers that are empty (miners dead) is equally deadlocked.
+        const haulerAlive = roomCreeps('hauler', rn) > 0;
+        const anyContainerHasEnergy = roomSources.some(src =>
+            src.pos.findInRange(FIND_STRUCTURES, 1, {
+                filter: s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0
+            }).length > 0
+        );
+        const haulerHasSomethingToDo = haulerAlive && anyContainerHasEnergy;
+        if (!haulerHasSomethingToDo) {
+            if (emergSourceId) {
+                // Container exists — spawn as miner so it will be renewed on the normal miner path
+                const r = spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
+                    memory: { role: 'miner', sourceId: emergSourceId, containerId: emergContainerId, homeRoom: rn }
+                });
+                if (r === OK) console.log('[spawn] ' + rn + ' miner(emerg) [WORK,CARRY,MOVE]');
+            } else {
+                // No container yet — spawn a minimal harvester to bootstrap income.
+                // A hauler with no container to pull from is useless and, worse, would be
+                // counted as a "live hauler" with no containerId, making it invisible to
+                // the per-container assigned check and permanently inflating hauler count by 1.
+                const r = spawn.spawnCreep([WORK, CARRY, MOVE], 'Emergency' + Game.time, {
+                    memory: { role: 'harvester', homeRoom: rn }
+                });
+                if (r === OK) console.log('[spawn] ' + rn + ' harvester(emerg-nocontainer) [WORK,CARRY,MOVE]');
+            }
+            return;
         }
-        return;
     }
 
     // Miners — one per container adjacent to a source; pre-spawn when current miner is nearly dead.
@@ -394,20 +430,59 @@ function spawnForRoom(spawn) {
                 // If there is truly no miner at all, spawn immediately at whatever energy
                 // is available to avoid a source going idle.
                 const trueZeroCoverage = minersForContainer.length === 0;
-                if (!trueZeroCoverage && room.energyAvailable < targetMinerCost) return;
+                // Use continue (not return) so we skip this container and keep evaluating
+                // other containers/sources — return would freeze the entire spawn queue.
+                if (!trueZeroCoverage && room.energyAvailable < targetMinerCost) continue;
                 const minerEnergy = trueZeroCoverage
                     ? Math.min(room.energyCapacityAvailable, room.energyAvailable)
                     : room.energyCapacityAvailable;
-                spawn.spawnCreep(getBody('miner', minerEnergy), 'Miner' + Game.time, {
+                const minerBody = getBody('miner', minerEnergy);
+                const minerResult = spawn.spawnCreep(minerBody, 'Miner' + Game.time, {
                     memory: { role: 'miner', sourceId: source.id, containerId: container.id, homeRoom: rn }
                 });
+                if (minerResult === OK) console.log('[spawn] ' + rn + ' miner ' + JSON.stringify(minerBody));
                 return;
             }
         }
     }
 
-    // Harvesters — 3 at RCL 1-3, replaced by miners+haulers at RCL 4+
-    const harvesterMax = rcl <= 3 ? 3 : 0;
+    // No-container miner bootstrap — fires when RCL>=4 and a source has no adjacent container
+    // AND no miner is currently assigned to that source. The main miner loop above only iterates
+    // containers (for container-aware parking), so it can never spawn a miner when containers are
+    // absent (e.g. containers were destroyed after a downgrade from RCL 6, or never yet built).
+    // Without this block the room deadlocks: harvesters fill spawn/extensions slowly, energy never
+    // reaches the 1300–1500 required for an upgrader/builder, and no miner ever spawns.
+    // A miner spawned without a containerId will drop-mine adjacent to the source (role.miner
+    // handles the no-container case on lines 49-55) and self-assign a container once one is placed.
+    if (rcl >= 4) {
+        for (const source of roomSources) {
+            const hasContainer = source.pos.findInRange(FIND_STRUCTURES, 1, {
+                filter: s => s.structureType === STRUCTURE_CONTAINER
+            }).length > 0;
+            if (hasContainer) continue; // covered by the container-aware miner loop above
+            const minersForSource = _.filter(Game.creeps, c =>
+                c.memory.role === 'miner' && c.memory.sourceId === source.id &&
+                c.memory.homeRoom === rn
+            );
+            const activeMinerCount = minersForSource.filter(
+                c => !c.ticksToLive || c.ticksToLive >= MINER_RESPAWN_TTL
+            ).length;
+            if (activeMinerCount < 1 && room.energyAvailable >= 150) {
+                const minerBody = getBody('miner', Math.min(room.energyCapacityAvailable, room.energyAvailable));
+                const minerResult = spawn.spawnCreep(minerBody, 'Miner' + Game.time, {
+                    memory: { role: 'miner', sourceId: source.id, homeRoom: rn }
+                });
+                if (minerResult === OK) console.log('[spawn] ' + rn + ' miner(no-container) ' + JSON.stringify(minerBody));
+                return;
+            }
+        }
+    }
+
+    // Harvesters — 3 at RCL 1-3, replaced by miners+haulers at RCL 4+.
+    // Exception: at RCL 4+ if no source containers exist yet (containers not yet built or
+    // recently destroyed), fall back to harvesters so income doesn't die while waiting
+    // for containers to be constructed.
+    const harvesterMax = rcl <= 3 ? 3 : (!anySourceContainer ? 2 : 0);
     if (roomCreeps('harvester', rn) < harvesterMax && room.energyAvailable >= 200) {
         spawnStandard(spawn, 'harvester', rn);
         return;
@@ -434,9 +509,10 @@ function spawnForRoom(spawn) {
             const { receiverLinks } = cache.getLinkRoles(room);
             const linkHasEnergy = receiverLinks.some(l => l.store[RESOURCE_ENERGY] > 0);
             if (hasMiners && (containerHasEnergy || linkHasEnergy)) {
-                spawn.spawnCreep([CARRY, CARRY, MOVE], 'EmergHauler' + Game.time, {
+                const r = spawn.spawnCreep([CARRY, CARRY, MOVE], 'EmergHauler' + Game.time, {
                     memory: { role: 'hauler', homeRoom: rn }
                 });
+                if (r === OK) console.log('[spawn] ' + rn + ' hauler(emerg) [CARRY,CARRY,MOVE]');
                 return;
             }
         }
@@ -458,9 +534,10 @@ function spawnForRoom(spawn) {
                 // even when extensions are drained. Without this, spawnStandard targets the
                 // full-capacity cost and bails every tick, deadlocking the room permanently.
                 const body = getBody('hauler', room.energyAvailable);
-                spawn.spawnCreep(body, 'Hauler' + Game.time, {
+                const r = spawn.spawnCreep(body, 'Hauler' + Game.time, {
                     memory: { role: 'hauler', homeRoom: rn }
                 });
+                if (r === OK) console.log('[spawn] ' + rn + ' hauler(link-mode) ' + JSON.stringify(body));
                 return;
             }
         } else {
@@ -873,15 +950,17 @@ function spawnStandard(spawn, role, homeRoom) {
 
     // Determine the target body — the best body this room can ever produce at full capacity.
     // For non-income roles, apply the SPAWN_BUFFER cap so we don't drain below emergency threshold.
-    const targetCapBudget = INCOME_ROLES.has(role)
+    const capBudget = INCOME_ROLES.has(role)
         ? room.energyCapacityAvailable
         : Math.max(200, room.energyCapacityAvailable - SPAWN_BUFFER);
-    const targetBody = getBody(role, targetCapBudget);
+    // Use the lesser of capBudget and energyAvailable to select the body tier.
+    // This ensures we pick a tier we can actually afford right now rather than
+    // waiting indefinitely for the room to reach the full-capacity budget
+    // (e.g. 1150 available / 1800 capacity → target body costs 1300, never spawns).
+    const spawnBudget = Math.min(capBudget, room.energyAvailable);
+    const targetBody = getBody(role, spawnBudget);
     const targetCost = bodyCost(targetBody);
 
-    // Wait for full-capacity energy unless we already have enough.
-    // This ensures one large creep rather than two small ones — larger bodies are
-    // always more efficient per-energy-spent on the MMO server.
     if (room.energyAvailable < targetCost) return;
 
     const name = role.charAt(0).toUpperCase() + role.slice(1) + Game.time;
@@ -890,7 +969,8 @@ function spawnStandard(spawn, role, homeRoom) {
         const sourceId = cache.pickSource(room);
         if (sourceId) memory.sourceId = sourceId;
     }
-    spawn.spawnCreep(targetBody, name, { memory });
+    const spawnResult = spawn.spawnCreep(targetBody, name, { memory });
+    if (spawnResult === OK) console.log('[spawn] ' + homeRoom + ' ' + role + ' ' + JSON.stringify(targetBody));
 }
 
 // Infrastructure-aware upgrader spawn.
@@ -918,9 +998,12 @@ function spawnUpgrader(spawn, homeRoom) {
         }
     }
 
-    // Apply SPAWN_BUFFER cap — upgraders are non-income, keep energy reserve for emergencies
+    // Apply SPAWN_BUFFER cap — upgraders are non-income, keep energy reserve for emergencies.
+    // Use min(capBudget, energyAvailable) so we pick a body tier we can afford right now.
+    // Without this, a room at 1150/1800 targets the 1500-cost body and never spawns.
     const budgetCap = Math.max(200, room.energyCapacityAvailable - SPAWN_BUFFER);
-    const body = getUpgraderBody(budgetCap, hasAdjacentEnergy);
+    const spawnBudget = Math.min(budgetCap, room.energyAvailable);
+    const body = getUpgraderBody(spawnBudget, hasAdjacentEnergy);
     const cost = bodyCost(body);
 
     if (room.energyAvailable < cost) return;
@@ -928,7 +1011,8 @@ function spawnUpgrader(spawn, homeRoom) {
     const sourceId = cache.pickSource(room);
     const memory = { role: 'upgrader', homeRoom };
     if (sourceId) memory.sourceId = sourceId;
-    spawn.spawnCreep(body, 'Upgrader' + Game.time, { memory });
+    const upgraderResult = spawn.spawnCreep(body, 'Upgrader' + Game.time, { memory });
+    if (upgraderResult === OK) console.log('[spawn] ' + homeRoom + ' upgrader' + (hasAdjacentEnergy ? '(link)' : '(nomad)') + ' ' + JSON.stringify(body));
 }
 
 module.exports.loop = function () {

@@ -26,9 +26,11 @@ const roleBuilder = {
     run: function (creep) {
         if (creep.memory.building && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.building = false;
+            console.log('[builder] ' + creep.name + ' start collect');
         }
         if (!creep.memory.building && creep.store.getFreeCapacity() === 0) {
             creep.memory.building = true;
+            console.log('[builder] ' + creep.name + ' start build');
         }
 
         if (creep.memory.building) {
