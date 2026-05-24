@@ -8,8 +8,15 @@ const roleUpgrader = {
         if (creep.memory.upgrading && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.upgrading = false;
         }
-        if (!creep.memory.upgrading && creep.store.getFreeCapacity() === 0) {
-            creep.memory.upgrading = true;
+        if (!creep.memory.upgrading) {
+            const storeFull = creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0;
+            const ctrl = creep.room.controller;
+            const nearCtrl = ctrl && creep.pos.inRangeTo(ctrl, 3);
+            // Flip to upgrading when fully loaded OR already adjacent to controller.
+            // Bare getFreeCapacity()===0 deadlocks WORK-heavy bodies (12W+1C = 50 carry)
+            // that can never fill from a drip-feeding link — nearCtrl lets them upgrade
+            // with whatever partial energy they have rather than idling forever.
+            if (storeFull || nearCtrl) creep.memory.upgrading = true;
         }
 
         if (creep.memory.upgrading) {
@@ -26,25 +33,38 @@ const roleUpgrader = {
     },
 
     getEnergy: function (creep) {
-        if (cache.pickupNearby(creep, 5)) return;
-
-        // Check for a controller-adjacent link (receiver link near controller)
-        // This is the RCL 6+ upgrader link pattern — withdraw without moving
+        // Check for a controller-adjacent link (receiver link near controller).
+        // This is the RCL 6+ upgrader link pattern — withdraw without moving.
+        // IMPORTANT: when the link exists but is currently empty, park adjacent to it
+        // and wait. Do NOT fall through to storage — that causes oscillation where the
+        // upgrader walks to storage, the link refills mid-walk, and the creep never
+        // arrives anywhere. Storage/container fallbacks only fire when no ctrlLink exists.
         const ctrl = creep.room.controller;
         if (ctrl) {
             const { receiverLinks } = cache.getLinkRoles(creep.room);
             // A receiver link near the controller acts as the upgrader link
             const ctrlLink = receiverLinks.find(l => l.pos.inRangeTo(ctrl, 3));
-            if (ctrlLink && ctrlLink.store[RESOURCE_ENERGY] > 0) {
-                if (creep.withdraw(ctrlLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(ctrlLink, { visualizePathStyle: { stroke: '#aa00ff' }, reusePath: 3 });
+            if (ctrlLink) {
+                if (ctrlLink.store[RESOURCE_ENERGY] > 0) {
+                    if (creep.withdraw(ctrlLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                        creep.moveTo(ctrlLink, { visualizePathStyle: { stroke: '#aa00ff' }, reusePath: 3 });
+                    }
+                    creep.say('🔗⚡');
+                } else {
+                    // Link empty — park next to it and wait for the next transfer.
+                    // Range 1 so we can withdraw the instant energy arrives.
+                    if (!creep.pos.inRangeTo(ctrlLink, 1)) {
+                        creep.moveTo(ctrlLink, { visualizePathStyle: { stroke: '#aa00ff' }, reusePath: 5 });
+                    }
+                    creep.say('⏳🔗');
                 }
-                creep.say('🔗⚡');
                 return;
             }
         }
 
-        // Storage: the best long-term energy source
+        if (cache.pickupNearby(creep, 5)) return;
+
+        // Storage: the best long-term energy source (only when no ctrl link exists)
         const storage = creep.room.storage;
         if (storage && storage.store[RESOURCE_ENERGY] > 5000) {
             if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {

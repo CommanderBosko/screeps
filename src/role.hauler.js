@@ -99,8 +99,6 @@ const roleHauler = {
             return;
         }
 
-        if (cache.pickupNearby(creep, 5)) return;
-
         // Receiver links sit near spawn/storage — withdraw here first (shortest trip).
         // Exclude controller-adjacent links (within 3 tiles) — those are reserved for upgraders.
         const { receiverLinks } = cache.getLinkRoles(creep.room);
@@ -150,6 +148,8 @@ const roleHauler = {
                 return;
             }
         }
+
+        if (cache.pickupNearby(creep, 5)) return;
 
         // Storage fallback: in link mode the receiver link may be controller-adjacent
         // (filtered above), leaving no links or containers to pull from. Withdraw from

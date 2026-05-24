@@ -8,17 +8,17 @@ function constructionPriority(rcl) {
         STRUCTURE_LINK,
         STRUCTURE_CONTAINER,
         STRUCTURE_STORAGE,
+        STRUCTURE_ROAD,
         STRUCTURE_WALL,
         STRUCTURE_RAMPART,
-        STRUCTURE_ROAD,
     ];
     return [
         STRUCTURE_EXTENSION,
         STRUCTURE_CONTAINER,
         STRUCTURE_STORAGE,
+        STRUCTURE_ROAD,
         STRUCTURE_WALL,
         STRUCTURE_RAMPART,
-        STRUCTURE_ROAD,
     ];
 }
 
@@ -64,10 +64,10 @@ const roleBuilder = {
             // Among near-equal progress, pick the path-closest in the top tier
             const best = topTier.length === 1
                 ? topTier[0]
-                : creep.pos.findClosestByPath(topTier) || topTier[0];
+                : creep.pos.findClosestByPath(topTier, { ignoreCreeps: true }) || topTier[0];
             if (best) {
                 if (creep.build(best) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(best, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 3 });
+                    creep.moveTo(best, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 0 });
                 }
                 creep.say('🚧');
             }
