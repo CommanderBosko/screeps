@@ -11,9 +11,22 @@ function pickAttackTarget(tower, hostiles) {
 
 const towerLogic = {
     run: function (tower) {
+        const towerE = tower.store[RESOURCE_ENERGY];
+        const towerEMax = tower.store.getCapacity(RESOURCE_ENERGY);
+        const tId = tower.id.slice(-4);
+
+        // Can't fire without energy — skip entirely to avoid wasted API calls
+        if (towerE === 0) {
+            console.log('[tower] #' + tId + ' | E:0/' + towerEMax + ' | empty | idle');
+            return;
+        }
+
         const hostiles = cache.find(tower.room, FIND_HOSTILE_CREEPS);
         if (hostiles.length > 0) {
-            tower.attack(pickAttackTarget(tower, hostiles));
+            const target = pickAttackTarget(tower, hostiles);
+            tower.attack(target);
+            const range = tower.pos.getRangeTo(target);
+            console.log('[tower] #' + tId + ' | E:' + towerE + '/' + towerEMax + ' | attack | ' + target.name + ' @ range ' + range);
             return;
         }
 
@@ -22,29 +35,26 @@ const towerLogic = {
             .filter(c => c.hits < c.hitsMax);
         if (wounded.length > 0) {
             wounded.sort((a, b) => a.hits - b.hits);
-            tower.heal(wounded[0]);
+            const healTarget = wounded[0];
+            tower.heal(healTarget);
+            console.log('[tower] #' + tId + ' | E:' + towerE + '/' + towerEMax + ' | heal | ' + healTarget.name + ' hits=' + healTarget.hits + '/' + healTarget.hitsMax);
             return;
         }
 
         const allStructures = cache.find(tower.room, FIND_STRUCTURES);
 
-        // Emergency: save ramparts critically close to 0 (newly built ones decay at 1 HP/tick)
+        // Emergency: save ramparts critically close to 0
         const dying = allStructures.filter(
             s => s.structureType === STRUCTURE_RAMPART && s.hits < RAMPART_EMERGENCY
         );
         if (dying.length > 0) {
             dying.sort((a, b) => a.hits - b.hits);
-            tower.repair(dying[0]);
+            const repTarget = dying[0];
+            tower.repair(repTarget);
+            console.log('[tower] #' + tId + ' | E:' + towerE + '/' + towerEMax + ' | repair-emergency | rampart#' + repTarget.id.slice(-4) + ' hits=' + repTarget.hits);
             return;
         }
 
-        // Repair roads, containers, and other non-barrier structures only when meaningfully
-        // damaged (below 70% health). Repairing at any hits < hitsMax wastes energy every tick
-        // on structures that have decayed only a few HP — this was draining ~20-30 energy/tick
-        // with 2 towers and preventing upgrader/builder spawning.
-        // Roads:      max 5000 — repair at < 3500 (70%)
-        // Containers: max 250000 — repair at < 175000 (70%)
-        // Other:      use 70% of hitsMax as general threshold
         const TOWER_REPAIR_THRESHOLD = 0.7;
         const damaged = allStructures.filter(s =>
             s.hits < s.hitsMax * TOWER_REPAIR_THRESHOLD &&
@@ -53,8 +63,13 @@ const towerLogic = {
         );
         if (damaged.length > 0) {
             damaged.sort((a, b) => (a.hits / a.hitsMax) - (b.hits / b.hitsMax));
-            tower.repair(damaged[0]);
+            const repTarget = damaged[0];
+            tower.repair(repTarget);
+            console.log('[tower] #' + tId + ' | E:' + towerE + '/' + towerEMax + ' | repair | ' + repTarget.structureType + '#' + repTarget.id.slice(-4) + ' hits=' + repTarget.hits + '/' + repTarget.hitsMax);
+            return;
         }
+
+        console.log('[tower] #' + tId + ' | E:' + towerE + '/' + towerEMax + ' | idle');
     }
 };
 

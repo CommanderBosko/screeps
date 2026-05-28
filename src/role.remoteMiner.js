@@ -29,11 +29,14 @@ const roleRemoteMiner = {
     },
 
     doReturn: function (creep, homeRoom) {
-        // Travel home first
+        // Travel home first — moveTo a RoomPosition in the target room; PathFinder handles
+        // multi-room routing automatically. findClosestByRange(exitDir) would receive a
+        // direction constant (integer), not an array, which crashes or returns garbage.
         if (creep.room.name !== homeRoom) {
-            const exitDir = creep.room.findExitTo(homeRoom);
-            const exitPos = creep.pos.findClosestByRange(exitDir);
-            creep.moveTo(exitPos, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 20 });
+            creep.moveTo(new RoomPosition(25, 25, homeRoom), {
+                visualizePathStyle: { stroke: '#ffaa00' },
+                reusePath: 20
+            });
             creep.say('🏠');
             return;
         }
@@ -63,11 +66,14 @@ const roleRemoteMiner = {
     },
 
     doMine: function (creep, targetRoom) {
-        // Travel to the target room if not already there
+        // Travel to the target room if not already there — moveTo a RoomPosition in the
+        // target room; PathFinder handles multi-room routing. Using findClosestByRange with
+        // a findExitTo result (integer direction constant) crashes or returns garbage.
         if (creep.room.name !== targetRoom) {
-            const exitDir = creep.room.findExitTo(targetRoom);
-            const exitPos = creep.pos.findClosestByRange(exitDir);
-            creep.moveTo(exitPos, { visualizePathStyle: { stroke: '#ff6600' }, reusePath: 20 });
+            creep.moveTo(new RoomPosition(25, 25, targetRoom), {
+                visualizePathStyle: { stroke: '#ff6600' },
+                reusePath: 20
+            });
             creep.say('🚀');
             return;
         }

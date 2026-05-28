@@ -1,10 +1,27 @@
 const cache = require('cache');
 const barrierCap = cache.barrierCap;
 
+function errName(code) {
+    const MAP = {
+        [OK]: 'OK',
+        [ERR_NOT_IN_RANGE]: 'ERR_NOT_IN_RANGE',
+        [ERR_NOT_ENOUGH_ENERGY]: 'ERR_NOT_ENOUGH_ENERGY',
+        [ERR_INVALID_TARGET]: 'ERR_INVALID_TARGET',
+        [ERR_FULL]: 'ERR_FULL',
+        [ERR_BUSY]: 'ERR_BUSY',
+        [ERR_NO_PATH]: 'ERR_NO_PATH',
+        [ERR_NOT_OWNER]: 'ERR_NOT_OWNER',
+        [ERR_TIRED]: 'ERR_TIRED',
+    };
+    return MAP[code] !== undefined ? MAP[code] : 'ERR(' + code + ')';
+}
+
+function eStr(creep) {
+    return 'E:' + creep.store[RESOURCE_ENERGY] + '/' + creep.store.getCapacity(RESOURCE_ENERGY);
+}
+
 const roleRepairer = {
     run: function (creep) {
-        // Flip to harvesting only when store is completely empty.
-        // This ensures the full energy load is committed to repair work before refueling.
         if (creep.memory.repairing && creep.store.getUsedCapacity() === 0) {
             creep.memory.repairing = false;
             creep.memory.repairTarget = null;
@@ -23,12 +40,17 @@ const roleRepairer = {
                 if (creep.store[RESOURCE_ENERGY] > 0) {
                     const storage = creep.room.storage;
                     if (storage) {
-                        if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                        const result = creep.transfer(storage, RESOURCE_ENERGY);
+                        if (result === ERR_NOT_IN_RANGE) {
                             creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+                            console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | idle | dump to storage -> ERR_NOT_IN_RANGE | moving');
+                        } else {
+                            console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | idle | dump to storage -> ' + errName(result));
                         }
                         return;
                     }
                 }
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | idle | no work');
                 creep.say('💤');
             }
         }
@@ -55,7 +77,9 @@ const roleRepairer = {
         const myStructs = cache.find(room, FIND_MY_STRUCTURES);
         const allStructures = cache.find(room, FIND_STRUCTURES);
         const roomTowers = myStructs.filter(s => s.structureType === STRUCTURE_TOWER);
-        const hasTower = roomTowers.length > 0;
+        // Use hasTowerWithEnergy to match hasWork() logic — an empty tower cannot repair
+        // roads/containers for us, so the repairer must still do that work itself.
+        const hasTowerWithEnergy = roomTowers.some(t => t.store[RESOURCE_ENERGY] > 0);
 
         // --- Emergency rampart rescue (always, regardless of tower presence) ---
         // Persist the target so the full load goes to one dying rampart.
@@ -71,8 +95,12 @@ const roleRepairer = {
                 target = dyingRamparts[0];
                 roleRepairer._lockTarget(creep, target);
             }
-            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+            const result = creep.repair(target);
+            if (result === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#ff0000' } });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | SOS rampart#' + target.id.slice(-4) + ' hits=' + target.hits + ' -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | SOS rampart#' + target.id.slice(-4) + ' hits=' + target.hits + ' -> ' + errName(result));
             }
             creep.say('SOS');
             return;
@@ -82,7 +110,7 @@ const roleRepairer = {
         // Pick the weakest barrier once at the start of each energy load.
         // Only switch targets if the locked structure was destroyed.
         // Never abandon mid-trip because a target reached cap — stay until store is empty.
-        if (hasTower) {
+        if (hasTowerWithEnergy) {
             let barrierTarget = creep.memory.repairTarget
                 ? Game.getObjectById(creep.memory.repairTarget)
                 : null;
@@ -103,16 +131,18 @@ const roleRepairer = {
                 creep.memory.repairTarget = barrierTarget.id;
             }
 
-            if (creep.repair(barrierTarget) === ERR_NOT_IN_RANGE) {
+            const barrierResult = creep.repair(barrierTarget);
+            if (barrierResult === ERR_NOT_IN_RANGE) {
                 creep.moveTo(barrierTarget, { visualizePathStyle: { stroke: '#aaaaaa' } });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | barrier#' + barrierTarget.id.slice(-4) + ' hits=' + barrierTarget.hits + ' -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | barrier#' + barrierTarget.id.slice(-4) + ' hits=' + barrierTarget.hits + ' -> ' + errName(barrierResult));
             }
             creep.say('🧱');
             return;
         }
 
         // --- No tower: repair roads/containers/etc. by damage percentage first ---
-        // Without a tower the repairer must handle all structure upkeep.
-        // Persist target so one structure gets fully repaired per trip.
         const damaged = allStructures.filter(s =>
             s.hits < s.hitsMax &&
             s.structureType !== STRUCTURE_WALL &&
@@ -129,8 +159,12 @@ const roleRepairer = {
                 target = damaged[0];
                 roleRepairer._lockTarget(creep, target);
             }
-            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+            const fixResult = creep.repair(target);
+            if (fixResult === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | fix ' + target.structureType + '#' + target.id.slice(-4) + ' -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | fix ' + target.structureType + '#' + target.id.slice(-4) + ' hits=' + target.hits + '/' + target.hitsMax + ' -> ' + errName(fixResult));
             }
             creep.say('fix');
             return;
@@ -152,8 +186,12 @@ const roleRepairer = {
                 target = weakBarriersNoTower[0];
                 roleRepairer._lockTarget(creep, target);
             }
-            if (creep.repair(target) === ERR_NOT_IN_RANGE) {
+            const barrierNTResult = creep.repair(target);
+            if (barrierNTResult === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#aaaaaa' } });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | barrier-notower#' + target.id.slice(-4) + ' hits=' + target.hits + ' -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | barrier-notower#' + target.id.slice(-4) + ' hits=' + target.hits + ' -> ' + errName(barrierNTResult));
             }
             creep.say('🧱');
             return;
@@ -162,28 +200,41 @@ const roleRepairer = {
         // Nothing to repair — dump energy into storage or park near spawn
         const storage = creep.room.storage;
         if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-            if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+            const bankResult = creep.transfer(storage, RESOURCE_ENERGY);
+            if (bankResult === ERR_NOT_IN_RANGE) {
                 creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | bank storage -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | bank storage -> ' + errName(bankResult));
             }
             creep.say('bank');
             return;
         }
 
-        const spawns = myStructs.filter(s => s.structureType === STRUCTURE_SPAWN);
+        // FIND_MY_STRUCTURES excludes spawns — must use FIND_MY_SPAWNS
+        const spawns = cache.find(creep.room, FIND_MY_SPAWNS);
         if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 3)) {
             creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#ffaa00' } });
         }
+        console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | repair | nothing to repair | idle');
         creep.say('💤');
     },
 
     getEnergy: function (creep) {
-        if (cache.pickupNearby(creep)) return;
+        if (cache.pickupNearby(creep)) {
+            console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | pickupNearby -> OK');
+            return;
+        }
 
         // Prefer storage (don't compete for containers)
         const storage = creep.room.storage;
         if (storage && storage.store[RESOURCE_ENERGY] > 300) {
-            if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
+            const result = creep.withdraw(storage, RESOURCE_ENERGY);
+            if (result === ERR_NOT_IN_RANGE) {
+                creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 1 });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | withdraw storage -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | withdraw storage -> ' + errName(result));
             }
             creep.say('stg');
             return;
@@ -199,14 +250,18 @@ const roleRepairer = {
             );
         if (containers.length > 0) {
             const target = creep.pos.findClosestByRange(containers);
-            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
+            const result = creep.withdraw(target, RESOURCE_ENERGY);
+            if (result === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 1 });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | withdraw container#' + target.id.slice(-4) + ' -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | withdraw container#' + target.id.slice(-4) + ' -> ' + errName(result));
             }
             creep.say('ctn');
             return;
         }
 
-        // Source containers as last resort before mining (tap any non-empty container)
+        // Source containers as last resort before mining
         const srcContainers = cache.find(creep.room, FIND_STRUCTURES)
             .filter(s =>
                 s.structureType === STRUCTURE_CONTAINER &&
@@ -214,21 +269,32 @@ const roleRepairer = {
             );
         if (srcContainers.length > 0) {
             const target = creep.pos.findClosestByRange(srcContainers);
-            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
+            const result = creep.withdraw(target, RESOURCE_ENERGY);
+            if (result === ERR_NOT_IN_RANGE) {
+                creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 1 });
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | withdraw src-container#' + target.id.slice(-4) + ' -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | withdraw src-container#' + target.id.slice(-4) + ' -> ' + errName(result));
             }
             creep.say('src');
             return;
         }
 
         // Don't compete with harvesters for source access when spawn is low
-        if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5) return;
+        if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5) {
+            console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | spawn low — waiting');
+            return;
+        }
 
         if (!creep.memory.sourceId) cache.assignSource(creep);
         const source = Game.getObjectById(creep.memory.sourceId);
         if (!source) { creep.memory.sourceId = null; return; }
-        if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 3 });
+        const mineResult = creep.harvest(source);
+        if (mineResult === ERR_NOT_IN_RANGE) {
+            creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 1 });
+            console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | harvest src#' + source.id.slice(-4) + ' -> ERR_NOT_IN_RANGE | moving');
+        } else {
+            console.log('[repairer] ' + creep.name + ' | ' + eStr(creep) + ' | collect | harvest src#' + source.id.slice(-4) + ' -> ' + errName(mineResult));
         }
         creep.say('mine');
     },

@@ -3,16 +3,38 @@ const cache = require('cache');
 // Stationary miner: parks on container, mines source, fills source link > container.
 // 5 WORK parts saturates a source (10 energy/tick harvest rate).
 
+function errName(code) {
+    const MAP = {
+        [OK]: 'OK',
+        [ERR_NOT_IN_RANGE]: 'ERR_NOT_IN_RANGE',
+        [ERR_NOT_ENOUGH_ENERGY]: 'ERR_NOT_ENOUGH_ENERGY',
+        [ERR_INVALID_TARGET]: 'ERR_INVALID_TARGET',
+        [ERR_FULL]: 'ERR_FULL',
+        [ERR_BUSY]: 'ERR_BUSY',
+        [ERR_NO_PATH]: 'ERR_NO_PATH',
+        [ERR_NOT_OWNER]: 'ERR_NOT_OWNER',
+        [ERR_TIRED]: 'ERR_TIRED',
+    };
+    return MAP[code] !== undefined ? MAP[code] : 'ERR(' + code + ')';
+}
+
+function eStr(creep) {
+    const cap = creep.store.getCapacity(RESOURCE_ENERGY);
+    return 'E:' + creep.store[RESOURCE_ENERGY] + '/' + (cap !== null ? cap : '?');
+}
+
 const roleMiner = {
     run: function (creep) {
         if (!creep.memory.sourceId) roleMiner.assignSource(creep);
         if (!creep.memory.containerId) roleMiner.assignContainer(creep);
 
         const source = /** @type {Source|null} */ (Game.getObjectById(creep.memory.sourceId));
-        if (!source) return;
+        if (!source) {
+            console.log('[miner] ' + creep.name + ' | ' + eStr(creep) + ' | no source | idle');
+            return;
+        }
 
         // Invalidate containerId if it no longer belongs to the assigned source
-        // (can happen when rebalanceSources switches sourceId mid-life).
         if (creep.memory.containerId) {
             const existing = /** @type {StructureContainer|null} */ (Game.getObjectById(creep.memory.containerId));
             if (!existing || !existing.pos.inRangeTo(source.pos, 1)) {
@@ -23,39 +45,43 @@ const roleMiner = {
 
         const container = /** @type {StructureContainer|null} */ (Game.getObjectById(creep.memory.containerId));
 
-        // Move to container position first — stationary mining is most efficient
         if (container) {
             if (!creep.pos.isEqualTo(container.pos)) {
-                creep.moveTo(container.pos, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
-                return; // Don't harvest until in position
+                const moveResult = creep.moveTo(container.pos, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 1, range: 0 });
+                if (moveResult === ERR_NO_PATH) {
+                    console.log('[miner] ' + creep.name + ' | ' + eStr(creep) + ' | container#' + container.id.slice(-4) + ' UNREACHABLE (ERR_NO_PATH) @(' + container.pos.x + ',' + container.pos.y + ')');
+                } else {
+                    console.log('[miner] ' + creep.name + ' | ' + eStr(creep) + ' | moving to container#' + container.id.slice(-4) + ' @(' + container.pos.x + ',' + container.pos.y + ')');
+                }
+                return;
             }
 
-            // When full, dump to link (teleports to receiver near spawn) or overflow to container.
-            // After a successful transfer the store has free capacity, so fall through to harvest
-            // on the same tick rather than wasting it.
             if (creep.store.getFreeCapacity() === 0) {
-                const link = creep.pos.findInRange(FIND_MY_STRUCTURES, 1, {
+                // Use range 2 (not 1): planner may place the source link on a tile adjacent
+                // to the source but on the opposite side from the container tile, putting the
+                // link at miner-to-link distance 2. Range 1 misses that link every time.
+                const link = creep.pos.findInRange(FIND_MY_STRUCTURES, 2, {
                     filter: s => s.structureType === STRUCTURE_LINK &&
                                  s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
                 })[0];
                 const result = link
                     ? creep.transfer(link, RESOURCE_ENERGY)
                     : creep.transfer(container, RESOURCE_ENERGY);
+                const targetLabel = link ? 'link#' + link.id.slice(-4) : 'container#' + container.id.slice(-4);
+                console.log('[miner] ' + creep.name + ' | ' + eStr(creep) + ' | dump | transfer ' + targetLabel + ' -> ' + errName(result));
                 creep.say('📤');
-                // If transfer failed (link full, container full) we truly can't act — stop
                 if (result !== OK) return;
-                // Transfer succeeded — store now has free capacity, fall through to harvest
             }
         } else {
-            // No container yet — move adjacent to source
             if (!creep.pos.inRangeTo(source, 1)) {
                 creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                console.log('[miner] ' + creep.name + ' | ' + eStr(creep) + ' | moving to src#' + source.id.slice(-4) + ' (no container)');
                 return;
             }
         }
 
-        // Harvest
-        creep.harvest(source);
+        const harvestResult = creep.harvest(source);
+        console.log('[miner] ' + creep.name + ' | ' + eStr(creep) + ' | harvest src#' + source.id.slice(-4) + ' -> ' + errName(harvestResult));
         creep.say('⛏️');
     },
 

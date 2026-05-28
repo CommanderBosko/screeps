@@ -8,101 +8,116 @@ const cache = require('cache');
 const CONTAINER_FULL_THRESHOLD = 0.8;
 
 /**
+ * A simple deterministic hash of a string to a non-negative integer.
+ * Used to assign haulers to containers without Memory writes.
+ */
+function nameHash(str) {
+    var h = 0;
+    for (var i = 0; i < str.length; i++) {
+        h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+    }
+    return h >>> 0; // unsigned
+}
+
+/**
  * Pick the best container for a hauler to withdraw from.
- * - If one container is meaningfully fuller than CONTAINER_FULL_THRESHOLD, prefer it.
- * - If both are above the threshold (i.e. both near-full), prefer the closest one.
+ * - If all containers are near-full (>= CONTAINER_FULL_THRESHOLD), distribute haulers
+ *   across them using a stable name-hash modulo — avoids both haulers converging on the
+ *   same "closest" container when positions happen to be symmetric.
+ * - If one container is meaningfully fuller than the others, prefer it.
  * - Otherwise fall back to the most-full container.
  */
 function pickContainer(creep, containers) {
     if (containers.length === 1) return containers[0];
-
-    const fullest = containers.reduce((a, b) =>
-        a.store[RESOURCE_ENERGY] >= b.store[RESOURCE_ENERGY] ? a : b);
 
     const allNearFull = containers.every(
         c => c.store[RESOURCE_ENERGY] / c.store.getCapacity(RESOURCE_ENERGY) >= CONTAINER_FULL_THRESHOLD
     );
 
     if (allNearFull) {
-        return creep.pos.findClosestByRange(containers);
+        // Stable round-robin: each hauler gets a fixed slot based on name hash.
+        // Sorts containers by id for a consistent ordering across all creeps.
+        const sorted = containers.slice().sort((a, b) => a.id < b.id ? -1 : 1);
+        return sorted[nameHash(creep.name) % sorted.length];
     }
-    return fullest;
+
+    return containers.reduce((a, b) =>
+        a.store[RESOURCE_ENERGY] >= b.store[RESOURCE_ENERGY] ? a : b);
+}
+
+function errName(code) {
+    const MAP = {
+        [OK]: 'OK',
+        [ERR_NOT_IN_RANGE]: 'ERR_NOT_IN_RANGE',
+        [ERR_NOT_ENOUGH_ENERGY]: 'ERR_NOT_ENOUGH_ENERGY',
+        [ERR_INVALID_TARGET]: 'ERR_INVALID_TARGET',
+        [ERR_FULL]: 'ERR_FULL',
+        [ERR_BUSY]: 'ERR_BUSY',
+        [ERR_NO_PATH]: 'ERR_NO_PATH',
+        [ERR_NOT_OWNER]: 'ERR_NOT_OWNER',
+        [ERR_TIRED]: 'ERR_TIRED',
+    };
+    return MAP[code] !== undefined ? MAP[code] : 'ERR(' + code + ')';
+}
+
+function eStr(creep) {
+    return 'E:' + creep.store[RESOURCE_ENERGY] + '/' + creep.store.getCapacity(RESOURCE_ENERGY);
 }
 
 const roleHauler = {
     run: function (creep) {
         if (creep.memory.delivering && creep.store[RESOURCE_ENERGY] === 0) {
             creep.memory.delivering = false;
-            console.log('[hauler] ' + creep.name + ' pickup (store empty)');
         }
         if (!creep.memory.delivering && creep.store.getFreeCapacity() === 0) {
             creep.memory.delivering = true;
-            console.log('[hauler] ' + creep.name + ' deposit (store full ' + creep.store[RESOURCE_ENERGY] + ')');
         }
+
+        const state = creep.memory.delivering ? 'deliver' : 'pickup';
 
         if (creep.memory.delivering) {
             const target = roleHauler.getDeliveryTarget(creep);
             if (target) {
-                if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 10 });
+                const result = creep.transfer(target, RESOURCE_ENERGY);
+                const tLabel = (target.structureType || 'obj') + '#' + target.id.slice(-4);
+                if (result === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 1 });
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | transfer ' + tLabel + ' -> ERR_NOT_IN_RANGE | moving');
+                } else {
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | transfer ' + tLabel + ' -> ' + errName(result));
                 }
                 creep.say('🚚');
             } else {
-                // Nothing to fill right now — top up store if possible, then park near spawn.
-
-                // Step 1: if we have room, pre-fill from receiver links (link mode) or
-                // containers (pre-link mode) so we're ready to deliver the instant a
-                // spawn/extension becomes available.
-                if (creep.store.getFreeCapacity() > 0) {
-                    // Prefer receiver links — in link mode containers will be empty
-                    const { receiverLinks } = cache.getLinkRoles(creep.room);
-                    const ctrl = creep.room.controller;
-                    const readyLinks = receiverLinks.filter(l =>
-                        l.store[RESOURCE_ENERGY] > 0 &&
-                        !(ctrl && l.pos.inRangeTo(ctrl, 3))
-                    );
-                    if (readyLinks.length > 0) {
-                        const src = creep.pos.findClosestByRange(readyLinks);
-                        if (creep.withdraw(src, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                            creep.moveTo(src, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 10 });
-                        }
-                        creep.say('🔋');
-                        return;
-                    }
-                    const containers = cache.find(creep.room, FIND_STRUCTURES)
-                        .filter(s => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0);
-                    if (containers.length > 0) {
-                        const src = pickContainer(creep, containers);
-                        if (creep.withdraw(src, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                            creep.moveTo(src, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
-                        }
-                        creep.say('🔋');
-                        return;
-                    }
-                    // Storage fallback: receiver link filtered out, containers empty — pre-fill
-                    // from storage so we're ready the instant a spawn/extension opens up.
+                // No delivery target found — dump carried energy into storage if possible,
+                // then park near spawn. Do NOT pre-fill from sources here: a hauler in
+                // deliver mode that starts picking up energy will loop (deliver=true stays
+                // set, re-fills, still no target, re-fills again).
+                if (creep.store[RESOURCE_ENERGY] > 0) {
                     const storage = creep.room.storage;
-                    if (storage && storage.store[RESOURCE_ENERGY] > 0) {
-                        if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                            creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                    if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+                        const r = creep.transfer(storage, RESOURCE_ENERGY);
+                        if (r === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 5 });
+                            console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | dump storage -> ERR_NOT_IN_RANGE | moving');
+                        } else {
+                            console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | dump storage -> ' + errName(r));
                         }
                         creep.say('🏦');
                         return;
                     }
                 }
-
-                // Step 2: full (or nothing to pull from) — park at range 1 of spawn.
+                // Full, storage also full, or no storage — park at spawn and wait
                 const spawns = cache.find(creep.room, FIND_MY_SPAWNS);
                 if (spawns.length > 0 && !creep.pos.inRangeTo(spawns[0], 1)) {
                     creep.moveTo(spawns[0], { visualizePathStyle: { stroke: '#aaaaaa' }, reusePath: 5 });
                 }
+                console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | no delivery target | parking');
                 creep.say('💤');
             }
             return;
         }
 
-        // Receiver links sit near spawn/storage — withdraw here first (shortest trip).
-        // Exclude controller-adjacent links (within 3 tiles) — those are reserved for upgraders.
+        // Pickup phase
         const { receiverLinks } = cache.getLinkRoles(creep.room);
         const ctrl = creep.room.controller;
         const readyReceivers = receiverLinks.filter(l =>
@@ -111,8 +126,12 @@ const roleHauler = {
         );
         if (readyReceivers.length > 0) {
             const target = creep.pos.findClosestByRange(readyReceivers);
-            if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+            const result = creep.withdraw(target, RESOURCE_ENERGY);
+            if (result === ERR_NOT_IN_RANGE) {
                 creep.moveTo(target, { visualizePathStyle: { stroke: '#00aaff' }, reusePath: 10 });
+                console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw link#' + target.id.slice(-4) + ' -> ERR_NOT_IN_RANGE | moving');
+            } else {
+                console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw link#' + target.id.slice(-4) + ' -> ' + errName(result));
             }
             creep.say('🔗');
             return;
@@ -122,17 +141,39 @@ const roleHauler = {
         if (creep.memory.containerId) {
             const container = /** @type {StructureContainer|null} */ (Game.getObjectById(creep.memory.containerId));
             if (container && container.store[RESOURCE_ENERGY] > 0) {
-                if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                const result = creep.withdraw(container, RESOURCE_ENERGY);
+                if (result === ERR_NOT_IN_RANGE) {
                     creep.moveTo(container, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw pinned-container#' + container.id.slice(-4) + ' -> ERR_NOT_IN_RANGE | moving');
+                } else {
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw pinned-container#' + container.id.slice(-4) + ' -> ' + errName(result));
                 }
                 creep.say('📦');
                 return;
             }
-            // Container empty or gone — clear pin and fall through to other sources
+            // Container is empty (miner dead or not yet arrived) — if we're carrying
+            // enough energy to be useful, switch to delivering now rather than idling
+            // next to an empty container waiting for the miner to respawn.
+            const PARTIAL_DELIVER_THRESHOLD = 100;
+            if (creep.store[RESOURCE_ENERGY] >= PARTIAL_DELIVER_THRESHOLD) {
+                creep.memory.delivering = true;
+                console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | pinned container empty, carrying ' + creep.store[RESOURCE_ENERGY] + ' — switching to deliver');
+                // Re-run as deliver mode this tick
+                const target = roleHauler.getDeliveryTarget(creep);
+                if (target) {
+                    const result = creep.transfer(target, RESOURCE_ENERGY);
+                    const tLabel = (target.structureType || 'obj') + '#' + target.id.slice(-4);
+                    if (result === ERR_NOT_IN_RANGE) {
+                        creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' }, reusePath: 1 });
+                    }
+                    console.log('[hauler] ' + creep.name + ' | partial deliver | transfer ' + tLabel + ' -> ' + errName(result));
+                }
+                return;
+            }
             delete creep.memory.containerId;
         }
 
-        // Unassigned fallback — prefer source-adjacent containers (link overflow) over others
+        // Unassigned fallback — prefer source-adjacent containers
         {
             const sources = cache.find(creep.room, FIND_SOURCES);
             const allContainers = cache.find(creep.room, FIND_STRUCTURES)
@@ -143,53 +184,72 @@ const roleHauler = {
             const containerPool = sourceContainers.length > 0 ? sourceContainers : allContainers;
             if (containerPool.length > 0) {
                 const target = pickContainer(creep, containerPool);
-                if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                const result = creep.withdraw(target, RESOURCE_ENERGY);
+                if (result === ERR_NOT_IN_RANGE) {
                     creep.moveTo(target, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw container#' + target.id.slice(-4) + ' -> ERR_NOT_IN_RANGE | moving');
+                } else {
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw container#' + target.id.slice(-4) + ' -> ' + errName(result));
                 }
                 creep.say('📦');
                 return;
             }
         }
 
-        if (cache.pickupNearby(creep, 5)) return;
+        if (cache.pickupNearby(creep, 5)) {
+            console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | pickupNearby -> OK');
+            return;
+        }
 
-        // Storage fallback: in link mode the receiver link may be controller-adjacent
-        // (filtered above), leaving no links or containers to pull from. Withdraw from
-        // storage so extensions/spawns don't starve.
+        // Storage fallback
         {
             const storage = creep.room.storage;
             if (storage && storage.store[RESOURCE_ENERGY] > 0) {
-                if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                const result = creep.withdraw(storage, RESOURCE_ENERGY);
+                if (result === ERR_NOT_IN_RANGE) {
                     creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' }, reusePath: 10 });
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw storage -> ERR_NOT_IN_RANGE | moving');
+                } else {
+                    console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | withdraw storage -> ' + errName(result));
                 }
                 creep.say('🏦');
                 return;
             }
         }
 
+        console.log('[hauler] ' + creep.name + ' | ' + eStr(creep) + ' | ' + state + ' | no energy source | idle');
         creep.say('💤');
     },
 
     getDeliveryTarget: function (creep) {
         const myStructs = cache.find(creep.room, FIND_MY_STRUCTURES);
 
-        // Priority 1: spawns (keep spawning capacity online)
-        const spawns = myStructs.filter(s =>
-            s.structureType === STRUCTURE_SPAWN && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        // Priority 1: spawns (keep spawning capacity online).
+        // IMPORTANT: FIND_MY_STRUCTURES does NOT include spawns in Screeps — must use
+        // FIND_MY_SPAWNS separately, otherwise this filter always returns an empty array.
+        const spawns = cache.find(creep.room, FIND_MY_SPAWNS).filter(s =>
+            s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
         );
         if (spawns.length > 0) return creep.pos.findClosestByRange(spawns);
 
-        // Priority 2: extensions — use findClosestByPath for accurate routing among many targets
+        // Priority 2: extensions — use findClosestByPath for accurate routing among many targets.
+        // Guard: findClosestByPath returns null when no path exists to any target. Fall through
+        // to the next priority rather than returning null and skipping towers/storage entirely.
         const extensions = myStructs.filter(s =>
             s.structureType === STRUCTURE_EXTENSION && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
         );
-        if (extensions.length > 0) return creep.pos.findClosestByPath(extensions);
+        if (extensions.length > 0) {
+            const ext = creep.pos.findClosestByPath(extensions);
+            if (ext) return ext;
+        }
 
-        // Priority 3: towers — pick the emptiest first (most free capacity) for even fill,
-        // break ties by range so we don't ignore a completely empty far tower
+        // Priority 3: towers — only fill when meaningfully empty (>= 100 free capacity).
+        // A tower at 996/1000 wastes hauler trips: the hauler transfers 4 energy and stays
+        // in deliver mode for many more ticks, blocking it from draining source containers.
+        const TOWER_MIN_FREE = 100;
         const towers = myStructs.filter(s =>
             s.structureType === STRUCTURE_TOWER &&
-            s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+            s.store.getFreeCapacity(RESOURCE_ENERGY) >= TOWER_MIN_FREE
         );
         if (towers.length > 0) {
             const maxFree = Math.max(...towers.map(t => t.store.getFreeCapacity(RESOURCE_ENERGY)));

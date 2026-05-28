@@ -643,18 +643,21 @@ function needsReplanning(room, rcl, mem) {
     if (rcl >= 2) {
         const myStructsCached = cache.find(room, FIND_MY_STRUCTURES);
         const allStructsCached = cache.find(room, FIND_STRUCTURES);
+        // FIND_MY_STRUCTURES excludes spawns — count them separately via FIND_MY_SPAWNS
+        const mySpawnCount = cache.find(room, FIND_MY_SPAWNS).length;
         let rampartTarget = 0;
         if (rcl < 4) {
-            rampartTarget = myStructsCached.filter(s => s.structureType === STRUCTURE_SPAWN).length;
+            rampartTarget = mySpawnCount;
         } else if (rcl < 5) {
-            rampartTarget = myStructsCached.filter(s => s.structureType === STRUCTURE_SPAWN).length +
+            rampartTarget = mySpawnCount +
                 myStructsCached.filter(s => s.structureType === STRUCTURE_TOWER).length;
         } else {
             const structTypes = [
-                STRUCTURE_SPAWN, STRUCTURE_TOWER, STRUCTURE_EXTENSION,
+                STRUCTURE_TOWER, STRUCTURE_EXTENSION,
                 STRUCTURE_CONTAINER, STRUCTURE_STORAGE, STRUCTURE_LINK,
             ];
-            rampartTarget = allStructsCached.filter(s => structTypes.includes(s.structureType)).length +
+            rampartTarget = mySpawnCount +
+                allStructsCached.filter(s => structTypes.includes(s.structureType)).length +
                 (room.controller ? 1 : 0);
         }
         if (countType(room, STRUCTURE_RAMPART) < rampartTarget) return true;

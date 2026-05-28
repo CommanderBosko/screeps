@@ -183,8 +183,7 @@ function bootstrapNewRooms() {
         const room = Game.rooms[roomName];
         if (!room.controller || !room.controller.my) continue;
 
-        const hasSpawn = cache.find(room, FIND_MY_STRUCTURES)
-            .some(s => s.structureType === STRUCTURE_SPAWN);
+        const hasSpawn = cache.find(room, FIND_MY_SPAWNS).length > 0;
         const hasSpawnSite = room.find(FIND_CONSTRUCTION_SITES)
             .some(s => s.structureType === STRUCTURE_SPAWN);
 
@@ -290,12 +289,25 @@ function spawnCreeps() {
 // Pre-storage (RCL 1-4): fixed at 2 — upgrading is the primary progress driver.
 // RCL 5+ with storage: scale with stored energy so upgraders don't starve the economy
 // at low reserves, but hammer the controller hard when energy is plentiful.
-// RCL 8 note: the controller upgrade cap is 15 WORK-parts/tick. The current top-tier
-// upgrader body is 12W (1500e), safely under the cap. If a future tier is added above
-// 1500e, ensure total WORK parts across all concurrent upgraders stays at or below 15.
+//
+// RCL 8 upgrade cap: the controller accepts AT MOST 15 WORK-parts/tick input TOTAL
+// across all concurrent upgraders. The top-tier body is 12W (1500e). Two 12W upgraders
+// = 24W applied — the excess 9W is silently discarded by the game engine every tick.
+// This wastes energy, so at RCL 8 the correct count is 1 upgrader (for downgrade protection)
+// OR intentionally more for GCL farming (set Memory.upgraderFarm[room] = true in console).
+// Scaling returns max 3 at RCL 8 (for GCL farming) — the 3rd upgrader has a smaller body
+// selected at spawn based on infrastructure, so total WORK stays ~15 in practice.
 function desiredUpgraders(room) {
+    const rcl = room.controller ? room.controller.level : 0;
     if (!room.storage) return 2;
     const energy = room.storage.store[RESOURCE_ENERGY];
+    // At RCL 8: 1 normally (15W cap), up to 3 for GCL farming when energy is plentiful
+    if (rcl >= 8) {
+        const farming = Memory.upgraderFarm && Memory.upgraderFarm[room.name];
+        if (farming && energy > 300000) return 3;
+        if (farming && energy > 100000) return 2;
+        return 1;
+    }
     if (energy < 50000)  return 1;
     if (energy < 150000) return 2;
     if (energy < 300000) return 3;
@@ -593,8 +605,8 @@ function spawnForRoom(spawn) {
         const targetRoom = Game.rooms[targetRoomName];
         if (!targetRoom.controller || !targetRoom.controller.my) continue;
         if (targetRoom.name === rn) continue;
-        const targetHasSpawn = cache.find(targetRoom, FIND_MY_STRUCTURES)
-            .some(s => s.structureType === STRUCTURE_SPAWN);
+        // FIND_MY_STRUCTURES excludes spawns — must use FIND_MY_SPAWNS
+        const targetHasSpawn = cache.find(targetRoom, FIND_MY_SPAWNS).length > 0;
         if (targetHasSpawn) continue;
         const pioneers = _.filter(Game.creeps, c =>
             c.memory.role === 'pioneer' && c.memory.targetRoom === targetRoomName
@@ -741,6 +753,19 @@ function spawnForRoom(spawn) {
                 memory: { role: 'claimer', targetRoom: Memory.claimTarget, homeRoom: rn }
             });
         }
+    }
+
+    // All quota checks passed without spawning — log so we can distinguish "correct idle"
+    // from a silent deadlock. Runs every 10 ticks alongside spawn-diag to avoid log flood.
+    if (Game.time % 10 === 0) {
+        const rcl0 = room.controller ? room.controller.level : 0;
+        const uf = desiredUpgraders(room);
+        const bf = constructionSites.length > 0 ? 2 : 0;
+        console.log('[spawn-idle] ' + rn +
+            ' RCL=' + rcl0 +
+            ' harvMax=' + (rcl0 <= 3 ? 3 : 0) +
+            ' upgMax=' + uf + '(cur=' + roomCreeps('upgrader', rn) + ')' +
+            ' bldMax=' + bf + '(cur=' + roomCreeps('builder', rn) + ')');
     }
 }
 
@@ -1018,6 +1043,8 @@ function spawnUpgrader(spawn, homeRoom) {
 module.exports.loop = function () {
     const tickStart = Game.cpu.getUsed();
 
+    console.log('[main] tick ' + Game.time + ' | bucket=' + Game.cpu.bucket);
+
     wipeMemory();
     migrateCreepMemory();
 
@@ -1048,10 +1075,26 @@ module.exports.loop = function () {
     setRoles();
     runTowers();
 
-    // Warn if we're using too much CPU
+    // Log spawning progress every tick for all spawns
+    for (const spawnName in Game.spawns) {
+        const sp = Game.spawns[spawnName];
+        const spRoom = sp.room;
+        const spE = spRoom.energyAvailable + '/' + spRoom.energyCapacityAvailable;
+        if (sp.spawning) {
+            const remaining = sp.spawning.remainingTime;
+            const total = Game.creeps[sp.spawning.name]
+                ? sp.spawning.remainingTime  // can't get total directly, show remaining
+                : sp.spawning.remainingTime;
+            console.log('[spawn] ' + spRoom.name + ' | E:' + spE + ' | spawning ' + sp.spawning.name + ' | ' + remaining + ' ticks left');
+        } else {
+            console.log('[spawn] ' + spRoom.name + ' | E:' + spE + ' | idle');
+        }
+    }
+
     const used = Game.cpu.getUsed() - tickStart;
+    console.log('[main] tick ' + Game.time + ' | CPU: ' + used.toFixed(2) + ' used');
     if (used > 18) {
-        console.log('⚠️ High CPU tick ' + Game.time + ': ' + used.toFixed(1) +
+        console.log('[main] WARNING high CPU tick ' + Game.time + ': ' + used.toFixed(1) +
             ' bucket=' + Game.cpu.bucket);
     }
 };
