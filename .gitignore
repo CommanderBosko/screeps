@@ -2,3 +2,4 @@ node_modules/
 dist/
 .screeps.json
 *.js.map
+screeps-console.log
